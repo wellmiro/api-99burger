@@ -1,0 +1,9 @@
+ITENS DO PEDIDO
+Data/Hora: 07/01/2026, 00:48
+
+(1)  X-Hawai             R$ 23.00
+(4)  Skol Lata           R$ 22.00
+(3)  Skol Lata           R$ 16.50
+(1)  Copão Chevette MorangoR$ 12.00
+-----------------------
+TOTAL ITENS:   R$ 73.50

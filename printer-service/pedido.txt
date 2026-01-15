@@ -1,0 +1,15 @@
+          *** PEDIDO #999 ***
+
+          Cliente: João da Silva
+===================================
+Itens:
+          - X-Bacon x1 R$23
+          - Coca-Cola Lata x1 R$7
+          - Batata Frita x1 R$15
+===================================
+          TOTAL: R$45
+
+          *** OBRIGADO! ***
+===================================
+
+

@@ -1,0 +1,68 @@
+2025-08-15 14:55:19 - Starting C:\Program Files\nodejs\node.exe  --harmony C:\Users\HOME\AppData\Roaming\npm\node_modules\qckwinsvc\node_modules\node-windows\lib\wrapper.js --file c:\Projetos\99Burger\backend\printer-service\service.js --log "CardapioPrinter wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-08-15 14:55:19 - Started 14728
+2025-08-15 14:56:09 - Stopping cardapioprinter.exe
+2025-08-15 14:56:09 - ProcessKill 14728
+2025-08-15 14:56:09 - Found child process: 17228 Name: conhost.exe
+2025-08-15 14:56:09 - Found child process: 11944 Name: node.exe
+2025-08-15 14:56:09 - Stopping process 17228
+2025-08-15 14:56:09 - Send SIGINT 17228
+2025-08-15 14:56:09 - SIGINT to 17228 failed - Killing as fallback
+2025-08-15 14:56:09 - Found child process: 16796 Name: cmd.exe
+2025-08-15 14:56:09 - Found child process: 21216 Name: conhost.exe
+2025-08-15 14:56:09 - Found child process: 10444 Name: notepad.exe
+2025-08-15 14:56:09 - Stopping process 21216
+2025-08-15 14:56:09 - Send SIGINT 21216
+2025-08-15 14:56:09 - SIGINT to 21216 failed - Killing as fallback
+2025-08-15 14:56:09 - Stopping process 10444
+2025-08-15 14:56:09 - Send SIGINT 10444
+2025-08-15 14:56:09 - SIGINT to 10444 failed - Killing as fallback
+2025-08-15 14:56:09 - Stopping process 16796
+2025-08-15 14:56:09 - Send SIGINT 16796
+2025-08-15 14:56:09 - SIGINT to 16796 failed - Killing as fallback
+2025-08-15 14:56:09 - Stopping process 11944
+2025-08-15 14:56:09 - Send SIGINT 11944
+2025-08-15 14:56:09 - SIGINT to 11944 failed - Killing as fallback
+2025-08-15 14:56:09 - Stopping process 14728
+2025-08-15 14:56:09 - Send SIGINT 14728
+2025-08-15 14:56:09 - SIGINT to 14728 failed - Killing as fallback
+2025-08-15 14:56:09 - Finished cardapioprinter.exe
+2025-08-15 14:56:14 - Starting C:\Program Files\nodejs\node.exe  --harmony C:\Users\HOME\AppData\Roaming\npm\node_modules\qckwinsvc\node_modules\node-windows\lib\wrapper.js --file c:\Projetos\99Burger\backend\printer-service\service.js --log "CardapioPrinter wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-08-15 14:56:14 - Started 5916
+2025-08-15 15:00:43 - Stopping cardapioprinter.exe
+2025-08-15 15:00:43 - ProcessKill 5916
+2025-08-15 15:00:43 - Found child process: 20108 Name: conhost.exe
+2025-08-15 15:00:43 - Found child process: 16168 Name: node.exe
+2025-08-15 15:00:43 - Stopping process 20108
+2025-08-15 15:00:43 - Send SIGINT 20108
+2025-08-15 15:00:43 - SIGINT to 20108 failed - Killing as fallback
+2025-08-15 15:00:43 - Found child process: 3116 Name: cmd.exe
+2025-08-15 15:00:43 - Found child process: 16700 Name: cmd.exe
+2025-08-15 15:00:43 - Found child process: 9444 Name: conhost.exe
+2025-08-15 15:00:43 - Found child process: 18084 Name: notepad.exe
+2025-08-15 15:00:43 - Stopping process 9444
+2025-08-15 15:00:43 - Send SIGINT 9444
+2025-08-15 15:00:43 - SIGINT to 9444 failed - Killing as fallback
+2025-08-15 15:00:43 - Stopping process 18084
+2025-08-15 15:00:43 - Send SIGINT 18084
+2025-08-15 15:00:43 - SIGINT to 18084 failed - Killing as fallback
+2025-08-15 15:00:43 - Stopping process 3116
+2025-08-15 15:00:43 - Send SIGINT 3116
+2025-08-15 15:00:43 - SIGINT to 3116 failed - Killing as fallback
+2025-08-15 15:00:43 - Found child process: 2600 Name: conhost.exe
+2025-08-15 15:00:43 - Found child process: 19636 Name: notepad.exe
+2025-08-15 15:00:43 - Stopping process 2600
+2025-08-15 15:00:43 - Send SIGINT 2600
+2025-08-15 15:00:43 - SIGINT to 2600 failed - Killing as fallback
+2025-08-15 15:00:44 - Stopping process 19636
+2025-08-15 15:00:44 - Send SIGINT 19636
+2025-08-15 15:00:44 - SIGINT to 19636 failed - Killing as fallback
+2025-08-15 15:00:44 - Stopping process 16700
+2025-08-15 15:00:44 - Send SIGINT 16700
+2025-08-15 15:00:44 - SIGINT to 16700 failed - Killing as fallback
+2025-08-15 15:00:44 - Stopping process 16168
+2025-08-15 15:00:44 - Send SIGINT 16168
+2025-08-15 15:00:44 - SIGINT to 16168 failed - Killing as fallback
+2025-08-15 15:00:44 - Stopping process 5916
+2025-08-15 15:00:44 - Send SIGINT 5916
+2025-08-15 15:00:44 - SIGINT to 5916 failed - Killing as fallback
+2025-08-15 15:00:44 - Finished cardapioprinter.exe

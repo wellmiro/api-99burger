@@ -1,0 +1,6 @@
+2025-08-15 14:18:34 - Starting C:\Program Files\nodejs\node.exe  --harmony C:\Users\HOME\AppData\Roaming\npm\node_modules\qckwinsvc\node_modules\node-windows\lib\wrapper.js --file "C:\Projetos\99Burger\backend\printer-service\sc query CardapioService" --log "CardapioService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-08-15 14:18:35 - Started 10444
+2025-08-15 14:19:09 - Starting C:\Program Files\nodejs\node.exe  --harmony C:\Users\HOME\AppData\Roaming\npm\node_modules\qckwinsvc\node_modules\node-windows\lib\wrapper.js --file "C:\Projetos\99Burger\backend\printer-service\sc query CardapioService" --log "CardapioService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-08-15 14:19:09 - Started 412
+2025-08-15 14:27:18 - Starting C:\Program Files\nodejs\node.exe  --harmony C:\Users\HOME\AppData\Roaming\npm\node_modules\qckwinsvc\node_modules\node-windows\lib\wrapper.js --file "C:\Projetos\99Burger\backend\printer-service\sc query CardapioService" --log "CardapioService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-08-15 14:27:18 - Started 13712

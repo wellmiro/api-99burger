@@ -1,0 +1,228 @@
+2025-08-15 09:58:36 - Starting C:\Program Files\nodejs\node.exe  --harmony C:\Users\HOME\AppData\Roaming\npm\node_modules\qckwinsvc\node_modules\node-windows\lib\wrapper.js --file c:\Projetos\99Burger\backend\printer-service\service.js --log "PrinterService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-08-15 09:58:36 - Started 8504
+2025-08-15 10:25:54 - Stopping printerservice.exe
+2025-08-15 10:25:54 - ProcessKill 8504
+2025-08-15 10:25:54 - Found child process: 3652 Name: conhost.exe
+2025-08-15 10:25:54 - Found child process: 9592 Name: node.exe
+2025-08-15 10:25:55 - Stopping process 3652
+2025-08-15 10:25:55 - Send SIGINT 3652
+2025-08-15 10:25:55 - SIGINT to 3652 failed - Killing as fallback
+2025-08-15 10:25:55 - Found child process: 2928 Name: cmd.exe
+2025-08-15 10:25:55 - Found child process: 17972 Name: conhost.exe
+2025-08-15 10:25:55 - Found child process: 8888 Name: notepad.exe
+2025-08-15 10:25:55 - Stopping process 17972
+2025-08-15 10:25:55 - Send SIGINT 17972
+2025-08-15 10:25:55 - SIGINT to 17972 failed - Killing as fallback
+2025-08-15 10:25:55 - Stopping process 8888
+2025-08-15 10:25:55 - Send SIGINT 8888
+2025-08-15 10:25:55 - SIGINT to 8888 failed - Killing as fallback
+2025-08-15 10:25:55 - Stopping process 2928
+2025-08-15 10:25:55 - Send SIGINT 2928
+2025-08-15 10:25:55 - SIGINT to 2928 failed - Killing as fallback
+2025-08-15 10:25:55 - Stopping process 9592
+2025-08-15 10:25:55 - Send SIGINT 9592
+2025-08-15 10:25:55 - SIGINT to 9592 failed - Killing as fallback
+2025-08-15 10:25:55 - Stopping process 8504
+2025-08-15 10:25:55 - Send SIGINT 8504
+2025-08-15 10:25:56 - SIGINT to 8504 failed - Killing as fallback
+2025-08-15 10:25:56 - Finished printerservice.exe
+2025-08-15 10:26:00 - Starting C:\Program Files\nodejs\node.exe  --harmony C:\Users\HOME\AppData\Roaming\npm\node_modules\qckwinsvc\node_modules\node-windows\lib\wrapper.js --file c:\Projetos\99Burger\backend\printer-service\service.js --log "PrinterService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-08-15 10:26:00 - Started 18696
+2025-08-15 10:47:28 - Stopping printerservice.exe
+2025-08-15 10:47:28 - ProcessKill 18696
+2025-08-15 10:47:29 - Found child process: 14356 Name: conhost.exe
+2025-08-15 10:47:29 - Found child process: 10624 Name: node.exe
+2025-08-15 10:47:29 - Stopping process 14356
+2025-08-15 10:47:29 - Send SIGINT 14356
+2025-08-15 10:47:29 - SIGINT to 14356 failed - Killing as fallback
+2025-08-15 10:47:29 - Found child process: 9960 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 19232 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 15512 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 14620 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 4144 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 18348 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 6236 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 11464 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 17000 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 19756 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 7232 Name: cmd.exe
+2025-08-15 10:47:29 - Found child process: 3100 Name: conhost.exe
+2025-08-15 10:47:29 - Found child process: 15096 Name: notepad.exe
+2025-08-15 10:47:29 - Stopping process 3100
+2025-08-15 10:47:29 - Send SIGINT 3100
+2025-08-15 10:47:29 - SIGINT to 3100 failed - Killing as fallback
+2025-08-15 10:47:29 - Stopping process 15096
+2025-08-15 10:47:29 - Send SIGINT 15096
+2025-08-15 10:47:29 - SIGINT to 15096 failed - Killing as fallback
+2025-08-15 10:47:29 - Stopping process 9960
+2025-08-15 10:47:29 - Send SIGINT 9960
+2025-08-15 10:47:29 - SIGINT to 9960 failed - Killing as fallback
+2025-08-15 10:47:30 - Found child process: 17968 Name: conhost.exe
+2025-08-15 10:47:30 - Found child process: 12708 Name: notepad.exe
+2025-08-15 10:47:30 - Stopping process 17968
+2025-08-15 10:47:30 - Send SIGINT 17968
+2025-08-15 10:47:30 - SIGINT to 17968 failed - Killing as fallback
+2025-08-15 10:47:30 - Stopping process 12708
+2025-08-15 10:47:30 - Send SIGINT 12708
+2025-08-15 10:47:30 - SIGINT to 12708 failed - Killing as fallback
+2025-08-15 10:47:30 - Stopping process 19232
+2025-08-15 10:47:30 - Send SIGINT 19232
+2025-08-15 10:47:30 - SIGINT to 19232 failed - Killing as fallback
+2025-08-15 10:47:30 - Found child process: 18240 Name: conhost.exe
+2025-08-15 10:47:30 - Found child process: 13148 Name: notepad.exe
+2025-08-15 10:47:30 - Stopping process 18240
+2025-08-15 10:47:30 - Send SIGINT 18240
+2025-08-15 10:47:30 - SIGINT to 18240 failed - Killing as fallback
+2025-08-15 10:47:30 - Stopping process 13148
+2025-08-15 10:47:30 - Send SIGINT 13148
+2025-08-15 10:47:30 - SIGINT to 13148 failed - Killing as fallback
+2025-08-15 10:47:30 - Stopping process 15512
+2025-08-15 10:47:30 - Send SIGINT 15512
+2025-08-15 10:47:30 - SIGINT to 15512 failed - Killing as fallback
+2025-08-15 10:47:30 - Found child process: 12916 Name: conhost.exe
+2025-08-15 10:47:30 - Found child process: 16812 Name: notepad.exe
+2025-08-15 10:47:30 - Stopping process 12916
+2025-08-15 10:47:30 - Send SIGINT 12916
+2025-08-15 10:47:30 - SIGINT to 12916 failed - Killing as fallback
+2025-08-15 10:47:30 - Stopping process 16812
+2025-08-15 10:47:30 - Send SIGINT 16812
+2025-08-15 10:47:30 - SIGINT to 16812 failed - Killing as fallback
+2025-08-15 10:47:30 - Stopping process 14620
+2025-08-15 10:47:30 - Send SIGINT 14620
+2025-08-15 10:47:30 - SIGINT to 14620 failed - Killing as fallback
+2025-08-15 10:47:30 - Found child process: 12520 Name: conhost.exe
+2025-08-15 10:47:30 - Found child process: 11500 Name: notepad.exe
+2025-08-15 10:47:30 - Stopping process 12520
+2025-08-15 10:47:30 - Send SIGINT 12520
+2025-08-15 10:47:30 - SIGINT to 12520 failed - Killing as fallback
+2025-08-15 10:47:30 - Stopping process 11500
+2025-08-15 10:47:30 - Send SIGINT 11500
+2025-08-15 10:47:30 - SIGINT to 11500 failed - Killing as fallback
+2025-08-15 10:47:30 - Stopping process 4144
+2025-08-15 10:47:30 - Send SIGINT 4144
+2025-08-15 10:47:30 - SIGINT to 4144 failed - Killing as fallback
+2025-08-15 10:47:30 - Found child process: 8700 Name: conhost.exe
+2025-08-15 10:47:30 - Found child process: 15716 Name: notepad.exe
+2025-08-15 10:47:30 - Stopping process 8700
+2025-08-15 10:47:30 - Send SIGINT 8700
+2025-08-15 10:47:30 - SIGINT to 8700 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 15716
+2025-08-15 10:47:31 - Send SIGINT 15716
+2025-08-15 10:47:31 - SIGINT to 15716 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 18348
+2025-08-15 10:47:31 - Send SIGINT 18348
+2025-08-15 10:47:31 - SIGINT to 18348 failed - Killing as fallback
+2025-08-15 10:47:31 - Found child process: 19604 Name: conhost.exe
+2025-08-15 10:47:31 - Found child process: 18872 Name: notepad.exe
+2025-08-15 10:47:31 - Stopping process 19604
+2025-08-15 10:47:31 - Send SIGINT 19604
+2025-08-15 10:47:31 - SIGINT to 19604 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 18872
+2025-08-15 10:47:31 - Send SIGINT 18872
+2025-08-15 10:47:31 - SIGINT to 18872 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 6236
+2025-08-15 10:47:31 - Send SIGINT 6236
+2025-08-15 10:47:31 - SIGINT to 6236 failed - Killing as fallback
+2025-08-15 10:47:31 - Found child process: 7360 Name: conhost.exe
+2025-08-15 10:47:31 - Found child process: 8836 Name: notepad.exe
+2025-08-15 10:47:31 - Stopping process 7360
+2025-08-15 10:47:31 - Send SIGINT 7360
+2025-08-15 10:47:31 - SIGINT to 7360 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 8836
+2025-08-15 10:47:31 - Send SIGINT 8836
+2025-08-15 10:47:31 - SIGINT to 8836 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 11464
+2025-08-15 10:47:31 - Send SIGINT 11464
+2025-08-15 10:47:31 - SIGINT to 11464 failed - Killing as fallback
+2025-08-15 10:47:31 - Found child process: 1692 Name: conhost.exe
+2025-08-15 10:47:31 - Found child process: 7992 Name: notepad.exe
+2025-08-15 10:47:31 - Stopping process 1692
+2025-08-15 10:47:31 - Send SIGINT 1692
+2025-08-15 10:47:31 - SIGINT to 1692 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 7992
+2025-08-15 10:47:31 - Send SIGINT 7992
+2025-08-15 10:47:31 - SIGINT to 7992 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 17000
+2025-08-15 10:47:31 - Send SIGINT 17000
+2025-08-15 10:47:31 - SIGINT to 17000 failed - Killing as fallback
+2025-08-15 10:47:31 - Found child process: 15732 Name: conhost.exe
+2025-08-15 10:47:31 - Found child process: 8828 Name: notepad.exe
+2025-08-15 10:47:31 - Stopping process 15732
+2025-08-15 10:47:31 - Send SIGINT 15732
+2025-08-15 10:47:31 - SIGINT to 15732 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 8828
+2025-08-15 10:47:31 - Send SIGINT 8828
+2025-08-15 10:47:31 - SIGINT to 8828 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 19756
+2025-08-15 10:47:31 - Send SIGINT 19756
+2025-08-15 10:47:31 - SIGINT to 19756 failed - Killing as fallback
+2025-08-15 10:47:31 - Found child process: 9328 Name: conhost.exe
+2025-08-15 10:47:31 - Found child process: 5472 Name: notepad.exe
+2025-08-15 10:47:31 - Stopping process 9328
+2025-08-15 10:47:31 - Send SIGINT 9328
+2025-08-15 10:47:31 - SIGINT to 9328 failed - Killing as fallback
+2025-08-15 10:47:31 - Stopping process 5472
+2025-08-15 10:47:32 - Send SIGINT 5472
+2025-08-15 10:47:32 - SIGINT to 5472 failed - Killing as fallback
+2025-08-15 10:47:32 - Stopping process 7232
+2025-08-15 10:47:32 - Send SIGINT 7232
+2025-08-15 10:47:32 - SIGINT to 7232 failed - Killing as fallback
+2025-08-15 10:47:32 - Stopping process 10624
+2025-08-15 10:47:32 - Send SIGINT 10624
+2025-08-15 10:47:32 - SIGINT to 10624 failed - Killing as fallback
+2025-08-15 10:47:32 - Stopping process 18696
+2025-08-15 10:47:32 - Send SIGINT 18696
+2025-08-15 10:47:32 - SIGINT to 18696 failed - Killing as fallback
+2025-08-15 10:47:32 - Finished printerservice.exe
+2025-08-15 14:03:06 - Starting C:\Program Files\nodejs\node.exe  --harmony C:\Users\HOME\AppData\Roaming\npm\node_modules\qckwinsvc\node_modules\node-windows\lib\wrapper.js --file c:\Projetos\99Burger\backend\printer-service\service.js --log "PrinterService wrapper" --grow 0.25 --wait 1 --maxrestarts 3 --abortonerror n --stopparentfirst undefined
+2025-08-15 14:03:06 - Started 2392
+2025-08-15 14:15:01 - Stopping printerservice.exe
+2025-08-15 14:15:01 - ProcessKill 2392
+2025-08-15 14:15:02 - Found child process: 13040 Name: conhost.exe
+2025-08-15 14:15:02 - Found child process: 11220 Name: node.exe
+2025-08-15 14:15:02 - Stopping process 13040
+2025-08-15 14:15:02 - Send SIGINT 13040
+2025-08-15 14:15:02 - SIGINT to 13040 failed - Killing as fallback
+2025-08-15 14:15:02 - Found child process: 15836 Name: cmd.exe
+2025-08-15 14:15:02 - Found child process: 19836 Name: cmd.exe
+2025-08-15 14:15:02 - Found child process: 16820 Name: cmd.exe
+2025-08-15 14:15:02 - Found child process: 5124 Name: conhost.exe
+2025-08-15 14:15:02 - Found child process: 4372 Name: notepad.exe
+2025-08-15 14:15:02 - Stopping process 5124
+2025-08-15 14:15:02 - Send SIGINT 5124
+2025-08-15 14:15:02 - SIGINT to 5124 failed - Killing as fallback
+2025-08-15 14:15:02 - Stopping process 4372
+2025-08-15 14:15:02 - Send SIGINT 4372
+2025-08-15 14:15:02 - SIGINT to 4372 failed - Killing as fallback
+2025-08-15 14:15:02 - Stopping process 15836
+2025-08-15 14:15:02 - Send SIGINT 15836
+2025-08-15 14:15:02 - SIGINT to 15836 failed - Killing as fallback
+2025-08-15 14:15:02 - Found child process: 2832 Name: conhost.exe
+2025-08-15 14:15:02 - Found child process: 6028 Name: notepad.exe
+2025-08-15 14:15:02 - Stopping process 2832
+2025-08-15 14:15:02 - Send SIGINT 2832
+2025-08-15 14:15:02 - SIGINT to 2832 failed - Killing as fallback
+2025-08-15 14:15:02 - Stopping process 6028
+2025-08-15 14:15:02 - Send SIGINT 6028
+2025-08-15 14:15:02 - SIGINT to 6028 failed - Killing as fallback
+2025-08-15 14:15:02 - Stopping process 19836
+2025-08-15 14:15:02 - Send SIGINT 19836
+2025-08-15 14:15:02 - SIGINT to 19836 failed - Killing as fallback
+2025-08-15 14:15:02 - Found child process: 6040 Name: conhost.exe
+2025-08-15 14:15:02 - Found child process: 19108 Name: notepad.exe
+2025-08-15 14:15:02 - Stopping process 6040
+2025-08-15 14:15:02 - Send SIGINT 6040
+2025-08-15 14:15:02 - SIGINT to 6040 failed - Killing as fallback
+2025-08-15 14:15:03 - Stopping process 19108
+2025-08-15 14:15:03 - Send SIGINT 19108
+2025-08-15 14:15:03 - SIGINT to 19108 failed - Killing as fallback
+2025-08-15 14:15:03 - Stopping process 16820
+2025-08-15 14:15:03 - Send SIGINT 16820
+2025-08-15 14:15:03 - SIGINT to 16820 failed - Killing as fallback
+2025-08-15 14:15:03 - Stopping process 11220
+2025-08-15 14:15:03 - Send SIGINT 11220
+2025-08-15 14:15:03 - SIGINT to 11220 failed - Killing as fallback
+2025-08-15 14:15:03 - Stopping process 2392
+2025-08-15 14:15:03 - Send SIGINT 2392
+2025-08-15 14:15:03 - SIGINT to 2392 failed - Killing as fallback
+2025-08-15 14:15:03 - Finished printerservice.exe
