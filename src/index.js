@@ -1022,18 +1022,18 @@ app.get("/pedidos/:id_pedido", (req, res) => {
 
 
   // Retorna todas as notificações não lidas de um usuário
-  app.get('/notificacoes', (req, res) => {
-    // Pega apenas notificações ativas
-    db.query(
-      'SELECT id_notificacao, mensagem, dt_criacao FROM notificacoes WHERE status = "A"',
-      (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.get("/notificacoes", function (request, response) {
+    // O segredo está nas ASPAS SIMPLES ao redor do A: 'A'
+    let ssql = "SELECT * FROM notificacoes WHERE status = 'A' "; 
 
-        // Retorna o array de notificações
-        res.json(results);
-      }
-    );
-  });
+    db.query(ssql, function (err, result) {
+        if (err) {
+            return response.status(500).json({ error: err.message });
+        } else {
+            return response.status(200).json(result);
+        }
+    });
+});
 
 
   // Marca todas as notificações de um usuário como lidas
