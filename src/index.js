@@ -8,8 +8,9 @@
   const cors = require("cors");
   const db = require("./config/database");
   const fetch = require('node-fetch');
-  const res = require("express/lib/response");
   const axios = require('axios'); // ✅ adicione isso
+  
+  const api = axios.create({ baseURL: "https://sua-api.onrender.com" });
 
   const app = express();
 
@@ -19,7 +20,11 @@
   app.use(express.json());
 
   // Middleware CORS
-  app.use(cors());
+app.use(cors({
+    origin: process.env.FRONT_URL || "*",
+    methods: ["GET","POST","PUT","DELETE"],
+    allowedHeaders: ["Content-Type","Authorization"]
+}));
 
   /*
       Verbos HTTP:
@@ -1380,6 +1385,9 @@ app.put("/pedidos/status/:id_pedido", (req, res) => {
   });
 });
 
-  app.listen(3000, '0.0.0.0', function () {
-      console.log("Servidor executando na porta 3000");
-  });
+
+const PORT = process.env.PORT || 3001;
+
+app.listen(PORT, () => {
+    console.log(`Servidor rodando na porta ${PORT}`);
+});
