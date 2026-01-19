@@ -1,109 +1,89 @@
 
   require('dotenv').config();
-  console.log('CWD:', process.cwd());
-  console.log('JWT_SECRET:', process.env.JWT_SECRET);
+const jwt = require('jsonwebtoken');
+const express = require("express");
+const cors = require("cors");
+const db = require("./config/database");
+const axios = require('axios');
+const path = require('path'); // Necessário para gerenciar caminhos de pastas
 
-  const jwt = require('jsonwebtoken');
-  const express = require("express");
-  const cors = require("cors");
-  const db = require("./config/database");
-  const fetch = require('node-fetch');
-  const axios = require('axios'); // ✅ adicione isso
-  
-  const api = axios.create({ baseURL: "https://sua-api.onrender.com" });
+const app = express();
 
-  const app = express();
+// --- MIDDLEWARES ---
+app.use(express.json());
 
-  const PRINTER_SERVICE_URL = 'https://strong-dragons-leave.loca.lt';
-
-  // Middleware JSON
-  app.use(express.json());
-
-  // Middleware CORS
 app.use(cors({
-    origin: process.env.FRONT_URL, // front online
-    methods: ["GET","POST","PUT","DELETE"],
-    allowedHeaders: ["Content-Type","Authorization"],
+    origin: '*',
+    methods: ["GET", "POST", "PUT", "DELETE"],
+    allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
 }));
 
-  /*
-      Verbos HTTP:
-      --------------------------
-      GET -> Retornar dados
-      POST -> Cadastrar dados
-      PUT -> Editar dados
-      PATCH -> Editar dados
-      DELETE -> Excluir dados
-  */
+// --- PASTAS DE ATUALIZAÇÃO ---
+// No Render, as pastas devem estar dentro do projeto. 
+// Se você subir as pastas 'desktop' e 'mobile' junto com o código, use assim:
+app.use('/update/desktop', express.static(path.join(__dirname, 'update', 'desktop')));
+app.use('/update/mobile', express.static(path.join(__dirname, 'update', 'mobile')));
 
-  /*
-      Status Code:
-      --------------------------
-      200 -> Retornar OK
-      201 -> Inserido com sucesso
-      400 -> Erro (cliente)
-      401 -> Não autorizado
-      404 -> Não encontrado
-      500 -> Erro (servidor)
-  */
+/* NOTA: Se você ainda estiver testando localmente no Windows e precisar do caminho C:/, 
+   o Render vai ignorar essas linhas se as pastas não existirem lá, o que é mais seguro.
+*/
 
-  // ✅ libera o acesso às pastas de atualização
-  app.use('/update/desktop', express.static('C:/99burger/desktop'));
-  app.use('/update/mobile', express.static('C:/99burger/mobile'));
+// --- ROTAS ---
 
-  app.get("/versao", function (request, response) {
-      const ssql = `
-          SELECT 
-              plataforma,
-              numero_versao
-          FROM versao
-      `;
-
-      db.query(ssql, function (err, result) {
-          if (err) {
-              console.error("Erro ao buscar versões:", err);
-              return response.status(500).send(err);
-          } else {
-              const versoes = {};
-              result.forEach(v => versoes[v.plataforma] = v.numero_versao);
-              return response.status(200).json(versoes);
-          }
-      });
-  });
-
-  app.put("/versao/:plataforma", function (req, res) {
-  const { plataforma } = req.params;
-  const { versao } = req.body;
-
-  if (!plataforma || !versao) {
-    return res.status(400).json({ erro: "É necessário informar a plataforma e a versão." });
-  }
-
-  if (plataforma !== "desktop" && plataforma !== "mobile") {
-    return res.status(400).json({ erro: "Plataforma inválida. Use 'desktop' ou 'mobile'." });
-  }
-
-  const ssql = `
-    UPDATE versao 
-    SET numero_versao = ?, data_atualizacao = NOW() 
-    WHERE plataforma = ?
-  `;
-
-  db.query(ssql, [versao, plataforma], function (err, result) {
-    if (err) {
-      console.error("Erro ao atualizar versão:", err);
-      return res.status(500).json({ erro: "Erro ao atualizar versão.", detalhes: err });
-    }
-
-    return res.status(200).json({
-      plataforma,
-      versao,
-      mensagem: `Versão ${plataforma} atualizada com sucesso para ${versao}`,
+app.get("/versao", function (req, res) {
+    const ssql = "SELECT plataforma, numero_versao FROM versao";
+    db.query(ssql, function (err, result) {
+        if (err) return res.status(500).send(err);
+        const versoes = {};
+        result.forEach(v => versoes[v.plataforma] = v.numero_versao);
+        return res.status(200).json(versoes);
     });
-  });
 });
 
+app.post("/login", function (req, res) {
+    const { email, senha } = req.body;
+    if (!email || !senha) return res.status(400).json({ error: "Email e senha obrigatórios" });
+
+    const ssql = "SELECT id_usuario, nome, email, senha FROM usuario WHERE email = ?";
+    db.query(ssql, [email], function (err, result) {
+        if (err) return res.status(500).json({ error: "Erro no banco" });
+        if (result.length > 0) {
+            const usuario = result[0];
+            if (senha === usuario.senha) {
+                const token = jwt.sign({ id_usuario: usuario.id_usuario }, process.env.JWT_SECRET, { expiresIn: '24h' });
+                return res.status(200).json({
+                    id_usuario: usuario.id_usuario,
+                    nome: usuario.nome,
+                    email: usuario.email,
+                    token: token
+                });
+            } else {
+                return res.status(401).json({ error: "Senha incorreta" });
+            }
+        } else {
+            return res.status(404).json({ error: "Usuário não encontrado" });
+        }
+    });
+});
+
+app.get("/produtos/cardapio", function (req, res) {
+    let ssql = `SELECT p.*, c.descricao AS categoria FROM produto p 
+                JOIN produto_categoria c ON c.id_categoria = p.id_categoria ORDER BY c.ordem`;
+    db.query(ssql, function (err, result) {
+        if (err) return res.status(500).send(err);
+        return res.status(200).json(result);
+    });
+});
+
+app.post('/usuarios', (req, res) => {
+    const { nome, email, senha, tipo } = req.body;
+    const ssql = "INSERT INTO usuario (nome, email, senha, tipo, status) VALUES (?, ?, ?, ?, 'S')";
+    db.query(ssql, [nome, email, senha, tipo || 'A'], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(201).json({ id_usuario: result.insertId });
+    });
+});
 
   // Rotas
   // GET: listar produtos do cardápio com qtd_min e qtd_max
@@ -1387,8 +1367,7 @@ app.put("/pedidos/status/:id_pedido", (req, res) => {
 });
 
 
-const PORT = process.env.PORT || 3001;
-
-app.listen(PORT, () => {
-    console.log(`Servidor rodando na porta ${PORT}`);
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+    console.log(`API 99Burger rodando na porta ${port}`);
 });
