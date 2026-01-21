@@ -1,33 +1,21 @@
-
-  require('dotenv').config();
+require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const express = require("express");
 const cors = require("cors");
 const db = require("./config/database");
-const axios = require('axios');
-const path = require('path'); // Necessário para gerenciar caminhos de pastas
 
 const app = express();
 
 // --- MIDDLEWARES ---
 app.use(express.json());
 
+// O CORS configurado assim está perfeito para aceitar conexões do seu Portal e App
 app.use(cors({
     origin: '*',
     methods: ["GET", "POST", "PUT", "DELETE"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true
 }));
-
-// --- PASTAS DE ATUALIZAÇÃO ---
-// No Render, as pastas devem estar dentro do projeto. 
-// Se você subir as pastas 'desktop' e 'mobile' junto com o código, use assim:
-app.use('/update/desktop', express.static(path.join(__dirname, 'update', 'desktop')));
-app.use('/update/mobile', express.static(path.join(__dirname, 'update', 'mobile')));
-
-/* NOTA: Se você ainda estiver testando localmente no Windows e precisar do caminho C:/, 
-   o Render vai ignorar essas linhas se as pastas não existirem lá, o que é mais seguro.
-*/
 
 // --- ROTAS ---
 
@@ -45,36 +33,41 @@ app.post("/login", function (req, res) {
     const { email, senha } = req.body;
     if (!email || !senha) return res.status(400).json({ error: "Email e senha obrigatórios" });
 
-    const ssql = "SELECT id_usuario, nome, email, senha FROM usuario WHERE email = ?";
+    // SELECT atualizado com os campos que o Delphi precisa
+    const ssql = "SELECT id_usuario, nome, email, senha, tipo, status, id_estabelecimento, dt_cadastro FROM usuario WHERE email = ?";
+    
     db.query(ssql, [email], function (err, result) {
         if (err) return res.status(500).json({ error: "Erro no banco" });
+        
         if (result.length > 0) {
             const usuario = result[0];
+            
             if (senha === usuario.senha) {
-                const token = jwt.sign({ id_usuario: usuario.id_usuario }, process.env.JWT_SECRET, { expiresIn: '24h' });
+                // Gerando o Token
+                const token = jwt.sign({ 
+                    id_usuario: usuario.id_usuario,
+                    id_estabelecimento: usuario.id_estabelecimento 
+                }, process.env.JWT_SECRET, { expiresIn: '24h' });
+
+                // Retornando o JSON completo para o Delphi
                 return res.status(200).json({
                     id_usuario: usuario.id_usuario,
                     nome: usuario.nome,
                     email: usuario.email,
+                    tipo: usuario.tipo, 
+                    status: usuario.status,
+                    id_estabelecimento: usuario.id_estabelecimento,
+                    dt_cadastro: usuario.dt_cadastro,
                     token: token
-                });
+                }); // <--- Fecha o JSON
             } else {
                 return res.status(401).json({ error: "Senha incorreta" });
             }
         } else {
             return res.status(404).json({ error: "Usuário não encontrado" });
         }
-    });
-});
-
-app.get("/produtos/cardapio", function (req, res) {
-    let ssql = `SELECT p.*, c.descricao AS categoria FROM produto p 
-                JOIN produto_categoria c ON c.id_categoria = p.id_categoria ORDER BY c.ordem`;
-    db.query(ssql, function (err, result) {
-        if (err) return res.status(500).send(err);
-        return res.status(200).json(result);
-    });
-});
+    }); // <--- Fecha o db.query
+}); // <--- Fecha o app.post
 
 app.post('/usuarios', (req, res) => {
     const { nome, email, senha, tipo } = req.body;
