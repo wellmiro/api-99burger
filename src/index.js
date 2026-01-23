@@ -408,6 +408,18 @@ app.post('/usuarios', (req, res) => {
     });
 });
 
+// Rota para deletar um item específico de um grupo
+app.delete("/produtos/opcoes/item/:id_item", function(req, res) {
+    let id_item = req.params.id_item;
+
+    db.query('DELETE FROM produto_opcao_item WHERE id_item = ?', [id_item], function(error, result) {
+        if (error) {
+            return res.status(500).send(error);
+        }
+        res.status(200).send({ id_item: id_item });
+    });
+});
+
   // DELETE - excluir grupo de produto
   app.delete("/produtos/opcoes/:id_opcao", function (req, res) {
       const id_opcao = parseInt(req.params.id_opcao, 10);
