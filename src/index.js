@@ -323,118 +323,90 @@ app.post('/usuarios', (req, res) => {
       });
   });
 
-  // app.post("/produtos/opcoes") - REVISADO PARA CRIAR GRUPO OU ADICIONAR ITEM
   app.post("/produtos/opcoes", function (req, res) {
-      const { 
-          id_opcao, // <-- Campo crucial que o front-end envia para "adicionar item"
-          id_produto, 
-          descricao, 
-          ind_obrigatorio = 'N',
-          qtd_max_escolha = 1, 
-          ind_ativo = 'S', 
-          ordem = 1, 
-          itens = [] 
-      } = req.body;
+    const {
+        id_opcao,
+        id_produto,
+        descricao,
+        ind_obrigatorio = 'N',
+        qtd_max_escolha = 1,
+        ind_ativo = 'S',
+        ordem = 1,
+        itens = []
+    } = req.body;
 
-      // --- LÓGICA 1: ADICIONAR ITEM A UM GRUPO EXISTENTE ---
-      if (id_opcao) {
-          // Validação
-          if (!id_opcao || !id_produto || !itens || itens.length === 0) {
-              return res.status(400).json({ 
-                  error: "Dados incompletos para adicionar item: id_opcao, id_produto e pelo menos um item são obrigatórios." 
-              });
-          }
+    // --- LÓGICA 1: ADICIONAR ITEM A UM GRUPO EXISTENTE ---
+    if (id_opcao) {
+        // Filtra itens para garantir que não venha nada vazio do Delphi
+        const itensValidos = itens.filter(item => item.nome_item && item.nome_item.trim() !== '');
 
-          // Monta os inserts dos novos itens para o id_opcao existente
-          const sqlItem = `
-              INSERT INTO produto_opcao_item 
-                  (id_opcao, nome_item, descricao, vl_item, ordem)
-              VALUES ?
-          `;
+        if (!id_produto || itensValidos.length === 0) {
+            return res.status(400).json({
+                error: "Dados incompletos: id_produto e pelo menos um item com nome são obrigatórios."
+            });
+        }
 
-          const valores = itens.map((item, index) => [
-              id_opcao, // Usa o ID do grupo existente
-              item.nome_item,
-              item.descricao_item || "",
-              item.vl_item || 0,
-              index + 1 // Ordem automática (Pode precisar de uma lógica mais robusta se a ordem for importante)
-          ]);
+        const sqlItem = `INSERT INTO produto_opcao_item (id_opcao, nome_item, descricao, vl_item, ordem) VALUES ?`;
+        const valores = itensValidos.map((item, index) => [
+            id_opcao,
+            item.nome_item,
+            item.descricao_item || "",
+            item.vl_item || 0,
+            index + 1
+        ]);
 
-          db.query(sqlItem, [valores], function (err) {
-              if (err) {
-                  console.error(err);
-                  return res.status(500).json({ 
-                      error: "Erro ao adicionar item ao grupo existente.", 
-                      details: err.message 
-                  });
-              }
+        db.query(sqlItem, [valores], function (err) {
+            if (err) {
+                console.error(err);
+                return res.status(500).json({ error: "Erro ao adicionar item", details: err.message });
+            }
+            return res.status(201).json({ message: "Item(s) adicionado(s)!", id_opcao });
+        });
+        return;
+    }
 
-              res.status(201).json({ 
-                  message: "Item(s) adicionado(s) ao grupo com sucesso!", 
-                  id_opcao 
-              });
-          });
-          return; // Termina a execução aqui, pois o item foi adicionado
-      }
+    // --- LÓGICA 2: CRIAR NOVO GRUPO (OPÇÃO) ---
+    if (!id_produto || !descricao) {
+        return res.status(400).json({ error: "id_produto e descricao são obrigatórios." });
+    }
 
-      // --- LÓGICA 2: CRIAR NOVO GRUPO (OPÇÃO) ---
-      
-      // Validação básica para criação de grupo
-      if (!id_produto || !descricao) {
-          return res.status(400).json({ error: "Campos obrigatórios para criar grupo: id_produto e descricao" });
-      }
+    const sqlOpcao = `INSERT INTO produto_opcao (id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem) VALUES (?, ?, ?, ?, ?, ?)`;
 
-      // SQL para inserir na tabela produto_opcao
-      const sqlOpcao = `
-          INSERT INTO produto_opcao 
-              (id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem)
-          VALUES (?, ?, ?, ?, ?, ?)
-      `;
+    db.query(sqlOpcao, [id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem], function (err, result) {
+        if (err) {
+            console.error(err);
+            return res.status(500).json({ error: "Erro ao inserir grupo", details: err.message });
+        }
 
-      db.query(sqlOpcao, [id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem], function (err, result) {
-          if (err) {
-              console.error(err);
-              return res.status(500).json({ error: "Erro ao inserir grupo de opção", details: err.message });
-          }
+        const new_id_opcao = result.insertId;
 
-          const new_id_opcao = result.insertId; // pega o id gerado do novo grupo
+        // FILTRO CRUCIAL: Só prossegue se houver itens com NOME preenchido
+        const itensParaInserir = itens.filter(item => item.nome_item && item.nome_item.trim() !== '');
 
-          // Se não tiver itens, só retorna sucesso
-          if (!itens || itens.length === 0) {
-              return res.status(201).json({ message: "Grupo criado com sucesso!", id_opcao: new_id_opcao });
-          }
+        if (itensParaInserir.length === 0) {
+            // Se o array de itens filtrado for vazio, para aqui e não cria o "item fantasma"
+            return res.status(201).json({ message: "Grupo criado com sucesso (vazio)!", id_opcao: new_id_opcao });
+        }
 
-          // Monta os inserts dos itens para o novo grupo
-          const sqlItem = `
-              INSERT INTO produto_opcao_item 
-                  (id_opcao, nome_item, descricao, vl_item, ordem)
-              VALUES ?
-          `;
+        // Se chegou aqui, é porque tem itens de verdade para inserir
+        const sqlItem = `INSERT INTO produto_opcao_item (id_opcao, nome_item, descricao, vl_item, ordem) VALUES ?`;
+        const valores = itensParaInserir.map((item, index) => [
+            new_id_opcao,
+            item.nome_item,
+            item.descricao_item || "",
+            item.vl_item || 0,
+            index + 1
+        ]);
 
-          const valores = itens.map((item, index) => [
-              new_id_opcao, // Usa o novo ID gerado
-              item.nome_item,
-              item.descricao_item || "",
-              item.vl_item || 0,
-              index + 1
-          ]);
-
-          db.query(sqlItem, [valores], function (err2) {
-              if (err2) {
-                  console.error(err2);
-                  return res.status(500).json({ 
-                      error: "Erro ao inserir itens do grupo", 
-                      details: err2.message 
-                  });
-              }
-
-              res.status(201).json({ 
-                  message: "Grupo e itens criados com sucesso!", 
-                  id_opcao: new_id_opcao 
-              });
-          });
-      });
-  });
+        db.query(sqlItem, [valores], function (err2) {
+            if (err2) {
+                console.error(err2);
+                return res.status(500).json({ error: "Erro ao inserir itens", details: err2.message });
+            }
+            res.status(201).json({ message: "Grupo e itens criados!", id_opcao: new_id_opcao });
+        });
+    });
+});
 
   // DELETE - excluir grupo de produto
   app.delete("/produtos/opcoes/:id_opcao", function (req, res) {
