@@ -33,8 +33,13 @@ app.post("/login", function (req, res) {
     const { email, senha } = req.body;
     if (!email || !senha) return res.status(400).json({ error: "Email e senha obrigatórios" });
 
-    // SELECT atualizado com os campos que o Delphi precisa
-    const ssql = "SELECT id_usuario, nome, email, senha, tipo, status, id_estabelecimento, dt_cadastro FROM usuario WHERE email = ?";
+    // SELECT agora com JOIN para buscar a logo da tabela estabelecimento
+    const ssql = `
+        SELECT u.id_usuario, u.nome, u.email, u.senha, u.tipo, u.status, 
+               u.id_estabelecimento, u.dt_cadastro, e.logo as url_logo 
+        FROM usuario u
+        INNER JOIN estabelecimento e ON (e.id_estabelecimento = u.id_estabelecimento)
+        WHERE u.email = ?`;
     
     db.query(ssql, [email], function (err, result) {
         if (err) return res.status(500).json({ error: "Erro no banco" });
@@ -43,13 +48,13 @@ app.post("/login", function (req, res) {
             const usuario = result[0];
             
             if (senha === usuario.senha) {
-                // Gerando o Token
+                // Gerando o Token (Mantido exatamente como estava)
                 const token = jwt.sign({ 
                     id_usuario: usuario.id_usuario,
                     id_estabelecimento: usuario.id_estabelecimento 
                 }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
-                // Retornando o JSON completo para o Delphi
+                // Retornando o JSON completo para o Delphi + o campo url_logo
                 return res.status(200).json({
                     id_usuario: usuario.id_usuario,
                     nome: usuario.nome,
@@ -58,15 +63,16 @@ app.post("/login", function (req, res) {
                     status: usuario.status,
                     id_estabelecimento: usuario.id_estabelecimento,
                     dt_cadastro: usuario.dt_cadastro,
+                    url_logo: usuario.url_logo, // <--- NOVO CAMPO ADICIONADO
                     token: token
-                }); // <--- Fecha o JSON
+                }); 
             } else {
                 return res.status(401).json({ error: "Senha incorreta" });
             }
         } else {
             return res.status(404).json({ error: "Usuário não encontrado" });
         }
-    }); // <--- Fecha o db.query
+    }); 
 }); // <--- Fecha o app.post
 
 app.post('/usuarios', (req, res) => {
