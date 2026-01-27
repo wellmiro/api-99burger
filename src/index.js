@@ -183,8 +183,10 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
 
 
   // Atualizar produto
-  app.put("/produtos/:id", function (req, res) {
+  app.put("/produtos/:id", token.ValidateJWT, function (req, res) {
     const id_produto = req.params.id;
+    const id_estabelecimento = req.id_estabelecimento; // Vem do Token decodificado
+    
     let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria } = req.body;
 
     // Garantir que preco >= 0
@@ -195,13 +197,14 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
       return res.status(400).json({ error: "Campos obrigatórios: nome, preco, id_categoria" });
     }
 
-    // Conversão segura dos números
+    // Conversão segura
     qtd = qtd != null ? parseInt(qtd) : 0;
     qtd_max = qtd_max != null ? parseInt(qtd_max) : 0;
     qtd_min = qtd_min != null ? parseInt(qtd_min) : 0;
     descricao = descricao || "";
     url_foto = url_foto || "";
 
+    // SQL com trava de segurança: id_produto + id_estabelecimento
     const ssql = `
       UPDATE produto
       SET 
@@ -213,19 +216,25 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
         qtd_max = ?,
         qtd_min = ?,
         id_categoria = ?
-      WHERE id_produto = ?
+      WHERE id_produto = ? AND id_estabelecimento = ?
     `;
 
-    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_produto];
+    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_produto, id_estabelecimento];
 
     db.query(ssql, params, function (err, result) {
       if (err) {
         console.error("Erro ao atualizar produto:", err);
         return res.status(500).json({ error: "Erro ao atualizar produto" });
       }
-      return res.status(200).json({ message: "Produto atualizado com sucesso", result });
+
+      // Se affectedRows for 0, significa que o produto não existe OU não pertence a essa empresa
+      if (result.affectedRows === 0) {
+        return res.status(403).json({ error: "Produto não encontrado ou acesso negado" });
+      }
+
+      return res.status(200).json({ message: "Produto atualizado com sucesso" });
     });
-  });
+});
 
 
   // Endpoint para cadastrar produto
