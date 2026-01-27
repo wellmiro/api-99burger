@@ -238,67 +238,74 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
 
 
   // Endpoint para cadastrar produto
-  app.post("/produtos", function (req, res) {
+  app.post("/produtos", token.ValidateJWT, function (req, res) {
+    const id_estabelecimento = req.id_estabelecimento; // Vem do Token decodificado
     let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria } = req.body;
 
-    // Garantir que preco >= 0
+    // Correção: parseFloat (tinha um erro de digitação no seu)
     preco = preco != null ? Math.max(0, parseFloat(preco)) : 0;
 
-    // Garantir campos obrigatórios
     if (!nome || id_categoria == null) {
-      return res.status(400).json({ error: "Campos obrigatórios: nome, preco, id_categoria" });
+        return res.status(400).json({ error: "Campos obrigatórios: nome, preco, id_categoria" });
     }
 
+    // Conversão segura e tratamento de nulos
     qtd = qtd != null ? parseInt(qtd) : 0;
-    qtd_max = qtd_max != null ? parseInt(qtd_max) : 0;
+    qtd_max = qtd_max != null ? parseInt(qtd_max) : 20; // Valor padrão se vier vazio
     qtd_min = qtd_min != null ? parseInt(qtd_min) : 0;
     descricao = descricao || "";
     url_foto = url_foto || "";
 
     const ssql = `
-      INSERT INTO produto 
-        (nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO produto 
+            (nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_estabelecimento)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria];
+    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_estabelecimento];
 
     db.query(ssql, params, function (err, result) {
-      if (err) {
-        console.error("Erro ao cadastrar produto:", err);
-        return res.status(500).json({ error: "Erro ao cadastrar produto" });
-      }
-      return res.status(201).json({ message: "Produto cadastrado com sucesso", result });
+        if (err) {
+            console.error("Erro ao cadastrar produto:", err);
+            return res.status(500).json({ error: "Erro ao cadastrar produto" });
+        }
+        return res.status(201).json({ 
+            message: "Produto cadastrado com sucesso", 
+            id_produto: result.insertId 
+        });
     });
-  });
+});
 
 
   // Deletar um produto pelo id
-  app.delete("/produtos/:id", function (req, res) {
-      const id_produto = req.params.id;
+ app.delete("/produtos/:id", token.ValidateJWT, function (req, res) {
+    const id_produto = req.params.id;
+    const id_estabelecimento = req.id_estabelecimento; // Segurança!
 
-      if (!id_produto) {
-          return res.status(400).json({ error: "ID do produto é obrigatório" });
-      }
+    if (!id_produto) {
+        return res.status(400).json({ error: "ID do produto é obrigatório" });
+    }
 
-      const sqlDelete = `
-          DELETE FROM produto
-          WHERE id_produto = ?
-      `;
+    // Só deleta se o ID do produto bater E pertencer à empresa logada
+    const sqlDelete = `
+        DELETE FROM produto
+        WHERE id_produto = ? AND id_estabelecimento = ?
+    `;
 
-      db.query(sqlDelete, [id_produto], function (err, result) {
-          if (err) {
-              console.error("Erro ao deletar produto:", err);
-              return res.status(500).json({ error: "Erro ao deletar produto" });
-          }
+    db.query(sqlDelete, [id_produto, id_estabelecimento], function (err, result) {
+        if (err) {
+            console.error("Erro ao deletar produto:", err);
+            return res.status(500).json({ error: "Erro ao deletar produto" });
+        }
 
-          if (result.affectedRows === 0) {
-              return res.status(404).json({ error: "Produto não encontrado" });
-          }
+        // Se ninguém foi deletado, ou o ID não existe ou o produto é de outro dono
+        if (result.affectedRows === 0) {
+            return res.status(403).json({ error: "Produto não encontrado ou acesso negado" });
+        }
 
-          return res.status(200).json({ message: "Produto deletado com sucesso" });
-      });
-  });
+        return res.status(200).json({ message: "Produto deletado com sucesso" });
+    });
+});
 
 
   app.get("/produtos/cardapio/opcoes/:id_produto", function (req, res) {
