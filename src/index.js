@@ -6,6 +6,8 @@ const db = require("./config/database");
 
 const app = express();
 
+const token = require("./token.js"); // Certifique-se que o caminho está correto
+
 // --- MIDDLEWARES ---
 app.use(express.json());
 
@@ -86,7 +88,16 @@ app.post('/usuarios', (req, res) => {
 
   // Rotas
   // GET: listar produtos do cardápio com qtd_min e qtd_max
-  app.get("/produtos/cardapio", function (request, response) {
+  // O id_estabelecimento vem 'carimbado' no token e o middleware joga no request
+app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
+    
+    // SEGURANÇA: Pegamos o ID direto do Token decodificado, nunca do body ou URL
+    const id_estabelecimento = request.id_estabelecimento;
+
+    if (!id_estabelecimento) {
+        return response.status(400).json({ error: "Estabelecimento não identificado no token." });
+    }
+
     let ssql = `
         SELECT 
             p.id_produto,
@@ -101,28 +112,31 @@ app.post('/usuarios', (req, res) => {
             c.id_categoria
         FROM produto p
         JOIN produto_categoria c ON c.id_categoria = p.id_categoria
+        WHERE p.id_estabelecimento = ? 
         ORDER BY c.ordem
     `;
 
-    db.query(ssql, function (err, result) {
+    // Passamos o ID no array [id_estabelecimento] para evitar SQL Injection
+    db.query(ssql, [id_estabelecimento], function (err, result) {
         if (err) {
             console.error("Erro ao buscar produtos:", err);
-            return response.status(500).send(err);
-        } else {
-            const produtos = result.map(p => ({
-                id_produto: p.id_produto,
-                nome: p.nome,
-                descricao: p.descricao,
-                url_foto: p.url_foto,
-                preco: parseFloat(p.preco),
-                qtd: p.qtd,
-                qtd_max: p.qtd_max,
-                qtd_min: p.qtd_min,
-                categoria: p.categoria,
-                id_categoria: p.id_categoria
-            }));
-            return response.status(200).json(produtos);
+            return response.status(500).json({ error: "Erro interno no servidor" });
         }
+
+        const produtos = result.map(p => ({
+            id_produto: p.id_produto,
+            nome: p.nome,
+            descricao: p.descricao,
+            url_foto: p.url_foto,
+            preco: parseFloat(p.preco),
+            qtd: p.qtd,
+            qtd_max: p.qtd_max,
+            qtd_min: p.qtd_min,
+            categoria: p.categoria,
+            id_categoria: p.id_categoria
+        }));
+
+        return response.status(200).json(produtos);
     });
 });
 
