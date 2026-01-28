@@ -546,7 +546,7 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
   });
 
 
-  app.get("/pedidos/resumo", function (request, response) {
+ app.get("/pedidos/resumo", token.ValidateJWT, function (request, response) {
       let ssql = `
           SELECT 
               p.id_pedido,
@@ -559,7 +559,7 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
               p.dinheiro,
               p.troco,
               p.endereco_entrega,
-              u.nome AS nome_login,  -- 🔁 corrigido aqui
+              u.nome AS nome_login,
               p.rota,
               p.vl_total
           FROM pedido p
@@ -609,13 +609,13 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
 });
 
 
-  app.get("/pedidos/itens_lista", function (request, response) {
+  app.get("/pedidos/itens_lista", token.ValidateJWT, function (request, response) {
       let ssql = `
           SELECT 
               p.id_pedido,
               p.numero_mesa,
               p.nome_cliente,
-              p.numero_pessoas,         -- Adicionado aqui
+              p.numero_pessoas,
               i.id_item,
               o.nome AS nome_produto,
               o.url_foto,
