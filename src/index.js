@@ -417,6 +417,19 @@ app.post("/produtos/opcoes", token.ValidateJWT, function (req, res) {
     });
 });
 
+// NOVA ROTA NO NODE.JS PARA INSERIR ITENS
+app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
+    const { id_opcao, nome_item, vl_item, descricao_item, ordem } = req.body;
+
+    const sql = `INSERT INTO produto_opcao_item (id_opcao, nome_item, vl_item, descricao_item, ordem) 
+                 VALUES (?, ?, ?, ?, ?)`;
+    
+    db.query(sql, [id_opcao, nome_item, vl_item, descricao_item || '', ordem || 0], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ id_item: result.insertId });
+    });
+});
+
   app.get("/pedidos", function (request, response) {
       let ssql = "select p.id_pedido, p.status, date_format(p.dt_pedido, '%d/%m/%Y %H:%i:%s') as dt_pedido, ";
       ssql += "p.vl_subtotal, p.vl_entrega, p.forma_pagamento, p.vl_total, ";
