@@ -397,6 +397,26 @@ app.delete("/produtos/opcoes/item/:id_item", token.ValidateJWT, function(req, re
     });
 });
 
+app.post("/produtos/opcoes", token.ValidateJWT, function (req, res) {
+    const { id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem } = req.body;
+    const id_estabelecimento = req.id_estabelecimento; // Vem do Token
+
+    // 1. Primeiro valida se o produto é mesmo desse estabelecimento
+    db.query("SELECT id_produto FROM produto WHERE id_produto = ? AND id_estabelecimento = ?", 
+    [id_produto, id_estabelecimento], (err, result) => {
+        if (err || result.length === 0) return res.status(403).json({ error: "Acesso negado" });
+
+        // 2. Insere o grupo
+        const sql = `INSERT INTO produto_opcao (id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem) 
+                     VALUES (?, ?, ?, ?, ?, ?)`;
+        
+        db.query(sql, [id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem], (err2, result2) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+            res.status(201).json({ id_opcao: result2.insertId });
+        });
+    });
+});
+
   app.get("/pedidos", function (request, response) {
       let ssql = "select p.id_pedido, p.status, date_format(p.dt_pedido, '%d/%m/%Y %H:%i:%s') as dt_pedido, ";
       ssql += "p.vl_subtotal, p.vl_entrega, p.forma_pagamento, p.vl_total, ";
