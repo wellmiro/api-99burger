@@ -77,7 +77,7 @@ app.post("/login", function (req, res) {
     }); 
 }); // <--- Fecha o app.post
 
-app.post('/usuarios', (req, res) => {
+app.post('/usuarios', token.ValidateJWT, (req, res) => {
     const { nome, email, senha, tipo } = req.body;
     const ssql = "INSERT INTO usuario (nome, email, senha, tipo, status) VALUES (?, ?, ?, ?, 'S')";
     db.query(ssql, [nome, email, senha, tipo || 'A'], (err, result) => {
@@ -738,10 +738,10 @@ app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
 
 
   // DELETE /pedidos/:id_pedido
-  app.delete("/pedidos/:id_pedido", function (request, response) {
+  app.delete("/pedidos/:id_pedido", token.ValidateJWT, function (request, response) {
       const idPedido = request.params.id_pedido;
 
-      // 1) Deleta os itens do pedido primeiro
+      // 1) Deleta os itens do pedido primeiro (Garante integridade referencial)
       let sqlItens = "DELETE FROM pedido_item WHERE id_pedido = ?";
       db.query(sqlItens, [idPedido], function (err, result) {
           if (err) {
@@ -755,12 +755,15 @@ app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
                   return response.status(500).json({ error: err2.message });
               }
 
-              return response.status(200).json({ message: "Pedido deletado com sucesso", id_pedido: idPedido });
+              return response.status(200).json({ 
+                  message: "Pedido deletado com sucesso", 
+                  id_pedido: idPedido 
+              });
           });
       });
   });
 
-  app.put("/pedidos/numero_pessoas/:id_pedido", function (request, response) {
+  app.put("/pedidos/numero_pessoas/:id_pedido", token.ValidateJWT, function (request, response) {
 
       // URL exemplo:
       // http://localhost:3000/pedidos/numero_pessoas/1000
@@ -785,7 +788,7 @@ app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
 
   });
 
-  app.put("/pedidos/forma_pagamento/:id_pedido", function (request, response) {
+  app.put("/pedidos/forma_pagamento/:id_pedido", token.ValidateJWT, function (request, response) {
 
     // URL exemplo:
     // http://localhost:3000/pedidos/forma_pagamento/1000
@@ -811,8 +814,7 @@ app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
 });
 
 
-  // Endpoint para atualizar o endereço de entrega
-  app.put("/pedidos/endereco/:id_pedido", function (request, response) {
+  app.put("/pedidos/endereco/:id_pedido", token.ValidateJWT, function (request, response) {
 
       const enderecoEntrega = request.body.endereco_entrega;
       const rota = request.body.rota || null; // pode vir vazio ou null
@@ -1063,6 +1065,26 @@ app.put('/notificacoes/:id_usuario', token.ValidateJWT, (req, res) => {
       });
     });
 });
+
+app.put("/notificacoes/:id", token.ValidateJWT, function (request, response) {
+    const id_notificacao = request.params.id;
+    const id_estabelecimento = request.id_estabelecimento;
+
+    const ssql = `
+        UPDATE notificacoes
+           SET status = 'L'
+         WHERE id_notificacao = ?
+           AND id_estabelecimento = ?
+    `;
+
+    db.query(ssql, [id_notificacao, id_estabelecimento], function (err) {
+        if (err) {
+            return response.status(500).json({ error: err.message });
+        }
+        return response.status(200).json({ ok: true });
+    });
+});
+
 
 
 app.post('/pedidos/:id/atualizar_impressao', token.ValidateJWT, (req, res) => {
