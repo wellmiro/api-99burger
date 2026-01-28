@@ -918,16 +918,34 @@ app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
 
   });
 
-  app.get("/usuarios/:id_usuario", (req, res) => {
-      const id_usuario = req.params.id_usuario;
+  app.get("/usuarios/:id_usuario", token.ValidateJWT, (req, res) => {
+    // O id_usuario vem da URL (params)
+    const id_usuario = req.params.id_usuario;
+    
+    // IMPORTANTE: Pegamos o id do estabelecimento que o ValidateJWT injetou no req
+    const id_estabelecimento = req.id_estabelecimento;
 
-      const sql = 'SELECT id_usuario, nome, email, status, dt_cadastro FROM usuario WHERE id_usuario = ?';
-      db.query(sql, [id_usuario], (err, result) => {
-          if (err) return res.status(500).json({ error: 'Erro no banco' });
-          if (result.length === 0) return res.status(404).json({ error: 'Usuário não encontrado' });
-          res.json(result[0]);
-      });
-  });
+    // Filtramos pelo ID do usuário E pelo estabelecimento para garantir segurança total
+    const sql = `
+        SELECT id_usuario, nome, email, status, dt_cadastro 
+        FROM usuario 
+        WHERE id_usuario = ? AND id_estabelecimento = ?
+    `;
+
+    db.query(sql, [id_usuario, id_estabelecimento], (err, result) => {
+        if (err) {
+            console.error("Erro ao buscar usuário:", err);
+            return res.status(500).json({ error: 'Erro no banco de dados' });
+        }
+
+        if (result.length === 0) {
+            return res.status(404).json({ error: 'Usuário não encontrado ou acesso negado' });
+        }
+
+        // Retorna o primeiro registro encontrado
+        res.json(result[0]);
+    });
+});
 
   // Rota para buscar a forma de pagamento de um pedido
 app.get("/pedidos/:id_pedido", (req, res) => {
@@ -955,16 +973,36 @@ app.get("/pedidos/:id_pedido", (req, res) => {
 });
 
 
-  app.post('/usuarios', (req, res) => {
-      const { nome, email, senha } = req.body;
-      if (!nome || !email || !senha) return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+app.post('/usuarios', (req, res) => {
+    // Adicionamos o id_estabelecimento no corpo da requisição (vindo do seu front)
+    const { nome, email, senha, id_estabelecimento } = req.body;
 
-      const sql = 'INSERT INTO usuario (nome, email, senha, dt_cadastro, status) VALUES (?, ?, ?, NOW(), "A")';
-      db.query(sql, [nome, email, senha], (err, result) => {
-          if (err) return res.status(500).json({ error: 'Erro ao cadastrar usuário' });
-          res.status(201).json({ id_usuario: result.insertId, nome, email, status: 'A' });
-      });
-  });
+    // Validamos se veio tudo, incluindo o estabelecimento
+    if (!nome || !email || !senha || !id_estabelecimento) {
+        return res.status(400).json({ error: 'Campos obrigatórios faltando (nome, email, senha, estabelecimento)' });
+    }
+
+    // SQL com id_estabelecimento incluído
+    const sql = `
+        INSERT INTO usuario (nome, email, senha, dt_cadastro, status, id_estabelecimento) 
+        VALUES (?, ?, ?, NOW(), 'A', ?)
+    `;
+
+    db.query(sql, [nome, email, senha, id_estabelecimento], (err, result) => {
+        if (err) {
+            console.error("Erro ao cadastrar:", err);
+            return res.status(500).json({ error: 'Erro ao cadastrar usuário' });
+        }
+        
+        res.status(201).json({ 
+            id_usuario: result.insertId, 
+            nome, 
+            email, 
+            status: 'A',
+            id_estabelecimento 
+        });
+    });
+});
 
   app.post('/login', (req, res) => {
   try {
