@@ -308,20 +308,24 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
 });
 
 
+// Rota para buscar grupos e itens do cardápio
 app.get("/produtos/cardapio/opcoes/:id_produto", token.ValidateJWT, function (req, res) {
     const id_produto = req.params.id_produto;
     const id_estabelecimento = req.id_estabelecimento; 
 
-    // Fazemos tudo em um SELECT só. Se o produto não for do estabelecimento,
-    // o WHERE vai filtrar e o result virá vazio automaticamente.
     const ssql = `
         SELECT 
             o.id_opcao,
-            o.descricao AS grupo_opcao,
+            o.id_produto,
+            o.descricao,
             o.ind_obrigatorio,
+            o.qtd_max_escolha,
+            o.ind_ativo,
+            o.ordem AS ordem_grupo,
             i.id_item,
             i.nome_item,
-            i.vl_item
+            i.vl_item,
+            i.ordem AS ordem_item
         FROM produto p
         INNER JOIN produto_opcao o ON o.id_produto = p.id_produto
         LEFT JOIN produto_opcao_item i ON i.id_opcao = o.id_opcao
@@ -334,10 +338,8 @@ app.get("/produtos/cardapio/opcoes/:id_produto", token.ValidateJWT, function (re
     db.query(ssql, [id_produto, id_estabelecimento], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
 
-        // Se o array vier vazio, pode ser que o produto não exista ou 
-        // o id_estabelecimento não seja o dono.
         if (rows.length === 0) {
-            return res.status(404).json({ message: "Nenhuma opção encontrada ou acesso negado." });
+            return res.status(404).json({ message: "Nenhum dado encontrado." });
         }
 
         res.status(200).json(rows);
