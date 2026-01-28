@@ -1128,58 +1128,70 @@ app.get("/notificacoes", function (request, response) {
   });
 
   // Adicionar ou atualizar impressora
-  app.post('/impressora', (req, res) => {
+  // POST /impressora - Registra ou Atualiza (Upsert)
+app.post('/impressora', token.ValidateJWT, (req, res) => {
+    const id_estabelecimento = req.id_estabelecimento;
     const { tipo, ip } = req.body;
 
     if (!tipo || !ip) {
-      return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
     }
 
-    const insertSQL = 'INSERT INTO impressora (ip, tipo) VALUES (?, ?)';
-    db.query(insertSQL, [ip, tipo], (err) => {
-      if (err) return res.status(500).json({ error: err.message });
+    // Usando ON DUPLICATE KEY UPDATE para garantir que só exista uma linha por estabelecimento
+    const sql = `
+        INSERT INTO impressora (ip, tipo, id_estabelecimento) 
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE ip = ?, tipo = ?
+    `;
 
-      return res.json({ message: 'Impressora registrada' });
+    db.query(sql, [ip, tipo, id_estabelecimento, ip, tipo], (err) => {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.json({ message: 'Impressora registrada/atualizada com sucesso' });
     });
-  });
+});
 
   // GET /impresora
-  app.get('/impressora', (req, res) => {
-    const selectSQL = 'SELECT id_impressora, tipo, ip FROM impressora';
+  app.get('/impressora', token.ValidateJWT, (req, res) => {
+    const id_estabelecimento = req.id_estabelecimento;
+    const selectSQL = 'SELECT id_impressora, tipo, ip FROM impressora WHERE id_estabelecimento = ?';
     
-    db.query(selectSQL, (err, results) => {
-      if (err) return res.status(500).json({ error: err.message });
-      return res.json(results);
+    db.query(selectSQL, [id_estabelecimento], (err, results) => {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.json(results);
     });
-  });
+});
 
-  // PUT /impresora
-  // PUT /impresora
-  // PUT /impresora
-  app.put('/impressora', (req, res) => {
+// PUT /impressora - Atualiza especificamente a impressora do dono do Token
+app.put('/impressora', token.ValidateJWT, (req, res) => {
+    const id_estabelecimento = req.id_estabelecimento;
     const { tipo, ip } = req.body;
 
     if (!tipo || !ip) {
-      return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
     }
 
-    const updateSQL = 'UPDATE impressora SET tipo = ?, ip = ? LIMIT 1';
-    db.query(updateSQL, [tipo, ip], (err) => {
-      if (err) return res.status(500).json({ error: err.message });
+    // Filtra pelo id_estabelecimento vindo do JWT para segurança
+    const updateSQL = 'UPDATE impressora SET tipo = ?, ip = ? WHERE id_estabelecimento = ?';
+    
+    db.query(updateSQL, [tipo, ip, id_estabelecimento], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
 
-      // retorna só o IP atualizado
-      const selectSQL = 'SELECT ip FROM impressora LIMIT 1';
-      db.query(selectSQL, (err2, results) => {
-        if (err2) return res.status(500).json({ error: err2.message });
-        if (results.length === 0) return res.status(404).json({ error: 'Impressora não encontrada' });
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: 'Nenhuma impressora encontrada para este estabelecimento' });
+        }
 
-        return res.json({
-          message: 'Impressora atualizada',
-          ip: results[0].ip
+        // Busca o IP atualizado para confirmar
+        const selectSQL = 'SELECT ip FROM impressora WHERE id_estabelecimento = ?';
+        db.query(selectSQL, [id_estabelecimento], (err2, results) => {
+            if (err2) return res.status(500).json({ error: err2.message });
+            
+            return res.json({
+                message: 'Impressora atualizada',
+                ip: results[0].ip
+            });
         });
-      });
     });
-  });
+});
 
   app.get('/horario', (req, res) => {
       const now = new Date();
