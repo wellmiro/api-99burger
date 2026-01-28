@@ -308,182 +308,108 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
 });
 
 
-  app.get("/produtos/cardapio/opcoes/:id_produto", function (req, res) {
-      const id_produto = parseInt(req.params.id_produto, 10);
+  // Rota pública para o cardápio do cliente
+pp.get(
+  "/produtos/cardapio/opcoes/:id_produto",
+  token.ValidateJWT,
+  function (req, res) {
 
-      if (!id_produto) 
-          return res.status(400).json({ error: "ID do produto inválido." });
+    const id_produto = req.params.id_produto;
+    const id_estabelecimento = req.id_estabelecimento; // vem do JWT
 
-      const ssql = `
-          SELECT 
-              o.id_opcao,
-              o.id_produto,
-              o.descricao,
-              o.ind_obrigatorio,
-              o.qtd_max_escolha,
-              o.ind_ativo,
-              o.ordem,
-              i.id_item,
-              i.nome_item,
-              i.descricao AS descricao_item,
-              i.vl_item
-          FROM produto_opcao o
-          LEFT JOIN produto_opcao_item i 
-              ON i.id_opcao = o.id_opcao
-          WHERE o.id_produto = ?
-          ORDER BY o.ordem, i.ordem
-      `;
+    // 1️⃣ Garante que o produto pertence ao estabelecimento do token
+    const sqlCheck = `
+        SELECT id_produto
+        FROM produto
+        WHERE id_produto = ? AND id_estabelecimento = ?
+    `;
 
-      db.query(ssql, [id_produto], function (err, result) {
-          if (err) {
-              console.error(err);
-              return res.status(500).json({ error: err.message });
-          }
-
-          // Aqui já mapeamos direto pro formato esperado
-          const linhas = result.map(row => ({
-              id_opcao: row.id_opcao,
-              id_produto: row.id_produto,
-              descricao: row.descricao,
-              ind_obrigatorio: row.ind_obrigatorio,
-              qtd_max_escolha: row.qtd_max_escolha,
-              ind_ativo: row.ind_ativo,
-              ordem: row.ordem,
-              id_item: row.id_item,
-              nome_item: row.nome_item,
-              descricao_item: row.descricao_item || "",
-              vl_item: row.vl_item ? parseFloat(row.vl_item) : 0
-          }));
-
-          res.status(200).json(linhas);
-      });
-  });
-
-  app.post("/produtos/opcoes", function (req, res) {
-    const {
-        id_opcao,
-        id_produto,
-        descricao,
-        ind_obrigatorio = 'N',
-        qtd_max_escolha = 1,
-        ind_ativo = 'S',
-        ordem = 1,
-        itens = []
-    } = req.body;
-
-    // --- LÓGICA 1: ADICIONAR ITEM A UM GRUPO EXISTENTE ---
-    if (id_opcao) {
-        // Filtra itens para garantir que não venha nada vazio do Delphi
-        const itensValidos = itens.filter(item => item.nome_item && item.nome_item.trim() !== '');
-
-        if (!id_produto || itensValidos.length === 0) {
-            return res.status(400).json({
-                error: "Dados incompletos: id_produto e pelo menos um item com nome são obrigatórios."
-            });
-        }
-
-        const sqlItem = `INSERT INTO produto_opcao_item (id_opcao, nome_item, descricao, vl_item, ordem) VALUES ?`;
-        const valores = itensValidos.map((item, index) => [
-            id_opcao,
-            item.nome_item,
-            item.descricao_item || "",
-            item.vl_item || 0,
-            index + 1
-        ]);
-
-        db.query(sqlItem, [valores], function (err) {
-            if (err) {
-                console.error(err);
-                return res.status(500).json({ error: "Erro ao adicionar item", details: err.message });
-            }
-            return res.status(201).json({ message: "Item(s) adicionado(s)!", id_opcao });
-        });
-        return;
-    }
-
-    // --- LÓGICA 2: CRIAR NOVO GRUPO (OPÇÃO) ---
-    if (!id_produto || !descricao) {
-        return res.status(400).json({ error: "id_produto e descricao são obrigatórios." });
-    }
-
-    const sqlOpcao = `INSERT INTO produto_opcao (id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem) VALUES (?, ?, ?, ?, ?, ?)`;
-
-    db.query(sqlOpcao, [id_produto, descricao, ind_obrigatorio, qtd_max_escolha, ind_ativo, ordem], function (err, result) {
+    db.query(sqlCheck, [id_produto, id_estabelecimento], (err, result) => {
         if (err) {
-            console.error(err);
-            return res.status(500).json({ error: "Erro ao inserir grupo", details: err.message });
+            return res.status(500).json({ error: err.message });
         }
 
-        const new_id_opcao = result.insertId;
-
-        // FILTRO CRUCIAL: Só prossegue se houver itens com NOME preenchido
-        const itensParaInserir = itens.filter(item => item.nome_item && item.nome_item.trim() !== '');
-
-        if (itensParaInserir.length === 0) {
-            // Se o array de itens filtrado for vazio, para aqui e não cria o "item fantasma"
-            return res.status(201).json({ message: "Grupo criado com sucesso (vazio)!", id_opcao: new_id_opcao });
+        if (result.length === 0) {
+            return res.status(403).json({ error: "Acesso negado a este produto." });
         }
 
-        // Se chegou aqui, é porque tem itens de verdade para inserir
-        const sqlItem = `INSERT INTO produto_opcao_item (id_opcao, nome_item, descricao, vl_item, ordem) VALUES ?`;
-        const valores = itensParaInserir.map((item, index) => [
-            new_id_opcao,
-            item.nome_item,
-            item.descricao_item || "",
-            item.vl_item || 0,
-            index + 1
-        ]);
+        // 2️⃣ Busca opções e itens
+        const ssql = `
+            SELECT 
+                o.id_opcao,
+                o.descricao AS grupo_opcao,
+                o.ind_obrigatorio,
+                i.id_item,
+                i.nome_item,
+                i.vl_item
+            FROM produto_opcao o
+            LEFT JOIN produto_opcao_item i 
+                ON i.id_opcao = o.id_opcao
+            WHERE o.id_produto = ?
+              AND o.ind_ativo = 'S'
+            ORDER BY o.ordem, i.ordem
+        `;
 
-        db.query(sqlItem, [valores], function (err2) {
+        db.query(ssql, [id_produto], (err2, rows) => {
             if (err2) {
-                console.error(err2);
-                return res.status(500).json({ error: "Erro ao inserir itens", details: err2.message });
+                return res.status(500).json({ error: err2.message });
             }
-            res.status(201).json({ message: "Grupo e itens criados!", id_opcao: new_id_opcao });
+
+            res.status(200).json(rows);
         });
     });
 });
 
-// Rota para deletar um item específico de um grupo
-app.delete("/produtos/opcoes/item/:id_item", function(req, res) {
-    let id_item = req.params.id_item;
+// Rota para deletar um item específico de um grupo (Adicional)
+app.delete("/produtos/opcoes/item/:id_item", token.ValidateJWT, function(req, res) {
+    const id_item = req.params.id_item;
+    const id_estabelecimento = req.id_estabelecimento; // Vem do Token
 
-    db.query('DELETE FROM produto_opcao_item WHERE id_item = ?', [id_item], function(error, result) {
+    // SQL com "Escalada de Segurança":
+    // Só deleta o item se ele estiver ligado a uma opção que pertence ao meu estabelecimento
+    const ssql = `
+        DELETE i FROM produto_opcao_item i
+        INNER JOIN produto_opcao o ON o.id_opcao = i.id_opcao
+        INNER JOIN produto p ON p.id_produto = o.id_produto
+        WHERE i.id_item = ? AND p.id_estabelecimento = ?
+    `;
+
+    db.query(ssql, [id_item, id_estabelecimento], function(error, result) {
         if (error) {
-            return res.status(500).send(error);
+            return res.status(500).json({ error: "Erro ao deletar item", details: error.message });
         }
-        res.status(200).send({ id_item: id_item });
+
+        // Se affectedRows for 0, o item não existe ou o usuário tentou deletar de outro restaurante
+        if (result.affectedRows === 0) {
+            return res.status(403).json({ error: "Permissão negada ou item não encontrado." });
+        }
+
+        res.status(200).json({ message: "Item removido!", id_item: id_item });
     });
 });
 
   // DELETE - excluir grupo de produto
-  app.delete("/produtos/opcoes/:id_opcao", function (req, res) {
-      const id_opcao = parseInt(req.params.id_opcao, 10);
+  app.delete("/produtos/opcoes/:id_opcao", token.ValidateJWT, function (req, res) {
+    const id_estabelecimento = req.id_estabelecimento;
+    const id_opcao = req.params.id_opcao;
 
-      if (!id_opcao) {
-          return res.status(400).json({ error: "ID do grupo inválido." });
-      }
+    // DELETE com JOIN para garantir que a opção pertence ao estabelecimento do Token
+    const ssql = `
+        DELETE o FROM produto_opcao o
+        INNER JOIN produto p ON p.id_produto = o.id_produto
+        WHERE o.id_opcao = ? AND p.id_estabelecimento = ?
+    `;
 
-      // Primeiro excluímos os itens relacionados
-      const sqlExcluirItens = "DELETE FROM produto_opcao_item WHERE id_opcao = ?";
-      db.query(sqlExcluirItens, [id_opcao], function (err, resultItens) {
-          if (err) {
-              console.error(err);
-              return res.status(500).json({ error: err.message });
-          }
+    db.query(ssql, [id_opcao, id_estabelecimento], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        if (result.affectedRows === 0) {
+            return res.status(403).json({ error: "Não permitido ou não encontrado." });
+        }
 
-          // Depois excluímos o próprio grupo
-          const sqlExcluirGrupo = "DELETE FROM produto_opcao WHERE id_opcao = ?";
-          db.query(sqlExcluirGrupo, [id_opcao], function (err, resultGrupo) {
-              if (err) {
-                  console.error(err);
-                  return res.status(500).json({ error: err.message });
-              }
-
-              res.status(200).json({ message: "Grupo e itens excluídos com sucesso!" });
-          });
-      });
-  });
+        res.status(200).json({ message: "Grupo removido com sucesso!" });
+    });
+});
 
   app.get("/pedidos", function (request, response) {
       let ssql = "select p.id_pedido, p.status, date_format(p.dt_pedido, '%d/%m/%Y %H:%i:%s') as dt_pedido, ";
