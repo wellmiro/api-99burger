@@ -626,31 +626,34 @@ app.delete("/produtos/opcoes/item/:id_item", function(req, res) {
   });
 
   app.put('/usuarios/:id', token.ValidateJWT, (req, res) => {
-    const id_usuario = req.params.id;
-    const id_estabelecimento = req.id_estabelecimento; // Vem do token
-    const { nome, email, senha, tipo } = req.body;
+    const { nome, email, tipo, senha } = req.body;
+    const { id } = req.params;
+    const id_estabelecimento = req.id_estabelecimento;
 
+    // Campos que são OBRIGATÓRIOS (sem eles o banco chora)
     if (!nome || !email || !tipo) {
-        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+        return res.status(400).json({ error: 'Nome, E-mail e Tipo são obrigatórios!' });
     }
 
-    const sql = `
-        UPDATE usuario 
-        SET nome = ?, email = ?, senha = ?, tipo = ? 
-        WHERE id_usuario = ? AND id_estabelecimento = ?
-    `;
+    let sql;
+    let params;
 
-    db.query(sql, [nome, email, senha, tipo, id_usuario, id_estabelecimento], (err, result) => {
-        if (err) {
-            console.error("Erro ao atualizar usuário:", err);
-            return res.status(500).json({ error: "Erro ao atualizar usuário" });
-        }
-        
-        if (result.affectedRows === 0) {
-            return res.status(403).json({ error: "Usuário não encontrado ou acesso negado" });
-        }
+    // Se a senha NÃO for vazia, atualiza ela também
+    if (senha && senha.trim() !== '') {
+        sql = `UPDATE usuario SET nome=?, email=?, senha=?, tipo=? 
+               WHERE id_usuario = ? AND id_estabelecimento = ?`;
+        params = [nome, email, tipo, senha, id, id_estabelecimento];
+    end } else {
+        // Se a senha for vazia, o SQL NÃO possui o campo senha. 
+        // Assim, a senha antiga continua lá bonitinha.
+        sql = `UPDATE usuario SET nome=?, email=?, tipo=? 
+               WHERE id_usuario = ? AND id_estabelecimento = ?`;
+        params = [nome, email, tipo, id, id_estabelecimento];
+    }
 
-        return res.status(200).json({ message: 'Usuário atualizado com sucesso' });
+    db.query(sql, params, (err, result) => {
+        if (err) return res.status(500).json({ error: 'Erro no banco: ' + err.message });
+        res.status(200).json({ message: 'Perfil atualizado com sucesso!' });
     });
 });
 
