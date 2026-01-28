@@ -1164,7 +1164,7 @@ app.put('/impressora', token.ValidateJWT, (req, res) => {
   });
 
 
-  app.post('/pedidos', async (req, res) => {
+  app.post('/pedidos', token.ValidateJWT, async (req, res) => {
   const p = req.body;
   if (!p.id_usuario || !p.itens?.length) 
     return res.status(400).json({ error: 'Dados faltando' });
@@ -1225,7 +1225,7 @@ app.put('/impressora', token.ValidateJWT, (req, res) => {
       )
     );
 
-    // Envio para impressora (se houver)
+    // Envio para impressora
     const bodyImpressao = {
       id_pedido: idPedido,
       nome_cliente: nomeCliente,
@@ -1246,7 +1246,6 @@ app.put('/impressora', token.ValidateJWT, (req, res) => {
       await axios.post(`${PRINTER_SERVICE_URL}/imprimir`, bodyImpressao, { timeout: 10000 });
     } catch (e) { /* ignora erro de impressão */ }
 
-    // Retorna apenas id_pedido e mensagem
     res.status(201).json({ id_pedido: idPedido, message: "Pedido cadastrado com sucesso" });
 
   } catch (e) {
@@ -1254,100 +1253,97 @@ app.put('/impressora', token.ValidateJWT, (req, res) => {
   }
 });
 
-  app.post('/pedidos/:id/itens', async (req, res) => {
-    const id_pedido = parseInt(req.params.id, 10);
-    const itens = req.body.itens;
+ app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
+  const id_pedido = parseInt(req.params.id, 10);
+  const itens = req.body.itens;
 
-    if (!id_pedido || !Array.isArray(itens) || !itens.length) {
-      return res.status(400).json({ error: 'ID do pedido e itens são obrigatórios' });
-    }
+  if (!id_pedido || !Array.isArray(itens) || !itens.length) {
+    return res.status(400).json({ error: 'ID do pedido e itens são obrigatórios' });
+  }
 
+  try {
+    // Inserir itens no banco
+    const valores = itens.map(i => [
+      id_pedido,
+      i.id_produto,
+      i.qtd,
+      i.vl_unitario,
+      i.vl_total,
+      i.observacao || null
+    ]);
+
+    await new Promise((resolve, reject) => {
+      const sqlInserir = `INSERT INTO pedido_item 
+        (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) 
+        VALUES ?`;
+      db.query(sqlInserir, [valores], (err, result) => err ? reject(err) : resolve(result));
+    });
+
+    // Soma apenas os itens adicionados neste POST
+    const totalItensNovos = itens.reduce((acc, i) => acc + (i.vl_total || 0), 0);
+
+    // Atualiza o vl_total do pedido
+    await new Promise((resolve, reject) => {
+      const sqlAtualizaTotal = `
+        UPDATE pedido
+        SET vl_total = vl_total + ?
+        WHERE id_pedido = ?;
+      `;
+      db.query(sqlAtualizaTotal, [totalItensNovos, id_pedido], (err) => err ? reject(err) : resolve());
+    });
+
+    // Buscar dados atualizados do pedido
+    const pedido = await new Promise((resolve, reject) => {
+      db.query(
+        "SELECT nome_cliente, vl_total FROM pedido WHERE id_pedido = ?",
+        [id_pedido],
+        (err, result) => err ? reject(err) : resolve(result[0])
+      );
+    });
+
+    // Montar corpo para impressão
+    const bodyImpressaoItens = {
+      nome_cliente: pedido.nome_cliente || "-",
+      itens: await Promise.all(itens.map(async i => {
+        const produto = await new Promise((resolve, reject) => {
+          db.query(
+            "SELECT nome FROM produto WHERE id_produto = ?",
+            [i.id_produto],
+            (err, result) => err ? reject(err) : resolve(result[0])
+          );
+        });
+
+        return {
+          nome_produto: produto ? produto.nome : `Produto ${i.id_produto}`,
+          qtd: i.qtd,
+          vl_unitario: i.vl_unitario,
+          vl_total: i.vl_total,
+          observacao: i.observacao || null
+        };
+      }))
+    };
+
+    // Chamar endpoint de impressão
     try {
-      // Inserir itens no banco
-      const valores = itens.map(i => [
-        id_pedido,
-        i.id_produto,
-        i.qtd,
-        i.vl_unitario,
-        i.vl_total,
-        i.observacao || null
-      ]);
-
-      await new Promise((resolve, reject) => {
-        const sqlInserir = `INSERT INTO pedido_item 
-          (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) 
-          VALUES ?`;
-        db.query(sqlInserir, [valores], (err, result) => err ? reject(err) : resolve(result));
-      });
-
-      // Soma apenas os itens adicionados neste POST
-      const totalItensNovos = itens.reduce((acc, i) => acc + (i.vl_total || 0), 0);
-
-      // Atualiza o vl_total do pedido
-      await new Promise((resolve, reject) => {
-        const sqlAtualizaTotal = `
-          UPDATE pedido
-          SET vl_total = vl_total + ?
-          WHERE id_pedido = ?;
-        `;
-        db.query(sqlAtualizaTotal, [totalItensNovos, id_pedido], (err) => err ? reject(err) : resolve());
-      });
-
-      // Buscar dados atualizados do pedido
-      const pedido = await new Promise((resolve, reject) => {
-        db.query(
-          "SELECT nome_cliente, vl_total FROM pedido WHERE id_pedido = ?",
-          [id_pedido],
-          (err, result) => err ? reject(err) : resolve(result[0])
-        );
-      });
-
-      // Montar corpo para impressão apenas dos itens adicionados
-      const bodyImpressaoItens = {
-        nome_cliente: pedido.nome_cliente || "-",
-        itens: await Promise.all(itens.map(async i => {
-          const produto = await new Promise((resolve, reject) => {
-            db.query(
-              "SELECT nome FROM produto WHERE id_produto = ?",
-              [i.id_produto],
-              (err, result) => err ? reject(err) : resolve(result[0])
-            );
-          });
-
-          return {
-            nome_produto: produto ? produto.nome : `Produto ${i.id_produto}`,
-            qtd: i.qtd,
-            vl_unitario: i.vl_unitario,
-            vl_total: i.vl_total,
-            observacao: i.observacao || null
-          };
-        }))
-      };
-
-      // 🔹 Chamar endpoint de impressão de itens no printer service usando IP fixo
-      try {
-        console.log('Corpo enviado para impressão:', JSON.stringify(bodyImpressaoItens, null, 2));
-        await axios.post(`${PRINTER_SERVICE_URL}/imprimir/itens`, bodyImpressaoItens);
-        console.log(`🖨 Itens recém-adicionados do pedido ${id_pedido} enviados para impressão`);
-      } catch (printErr) {
-        console.error('Erro ao imprimir itens:', printErr.message);
-      }
-
-      res.status(201).json({
-        message: 'Itens adicionados com sucesso, total atualizado e itens enviados para impressão',
-        total_itens_novos: totalItensNovos
-      });
-
-    } catch (err) {
-      console.error('Erro ao adicionar itens:', err);
-      res.status(500).json({ message: 'Erro ao adicionar itens', error: err.message });
+      await axios.post(`${PRINTER_SERVICE_URL}/imprimir/itens`, bodyImpressaoItens);
+    } catch (printErr) {
+      console.error('Erro ao imprimir itens:', printErr.message);
     }
-  });
+
+    res.status(201).json({
+      message: 'Itens adicionados com sucesso, total atualizado e itens enviados para impressão',
+      total_itens_novos: totalItensNovos
+    });
+
+  } catch (err) {
+    res.status(500).json({ message: 'Erro ao adicionar itens', error: err.message });
+  }
+});
 
 
-app.put("/pedidos/status/:id_pedido", (req, res) => {
+app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
   const id_pedido = req.params.id_pedido;
-  const novoStatus = req.body.status; // a letra nova do status, ex: "F" ou "A"
+  const novoStatus = req.body.status; // ex: "F" (Finalizado), "P" (Produção), etc.
 
   if (!novoStatus) {
     return res.status(400).json({ erro: "É necessário informar o novo status" });
@@ -1375,7 +1371,7 @@ app.put("/pedidos/status/:id_pedido", (req, res) => {
         }
 
         itens.forEach(item => {
-          // Atualiza estoque do produto
+          // Atualiza estoque do produto (usando GREATEST para não ficar negativo)
           const sqlAtualizaProduto = `
             UPDATE produto
             SET qtd = GREATEST(qtd - ?, 0)
