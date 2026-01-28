@@ -1135,45 +1135,29 @@ app.post('/impressora', token.ValidateJWT, (req, res) => {
 });
 
   // GET /impresora
-  app.get('/impressora', token.ValidateJWT, (req, res) => {
-    const id_estabelecimento = req.id_estabelecimento;
-    const selectSQL = 'SELECT id_impressora, tipo, ip FROM impressora WHERE id_estabelecimento = ?';
+  app.get("/impressora", token.ValidateJWT, (req, res) => {
+    const id_est = req.id_estabelecimento; // Vem do Token!
+    const sql = "SELECT * FROM impressora WHERE id_estabelecimento = ?";
     
-    db.query(selectSQL, [id_estabelecimento], (err, results) => {
-        if (err) return res.status(500).json({ error: err.message });
-        return res.json(results);
+    db.query(sql, [id_est], (err, result) => {
+        if (err) return res.status(500).send(err);
+        res.status(200).json(result);
     });
 });
 
 // PUT /impressora - Atualiza especificamente a impressora do dono do Token
-app.put('/impressora', token.ValidateJWT, (req, res) => {
-    const id_estabelecimento = req.id_estabelecimento;
+app.put("/impressora", token.ValidateJWT, (req, res) => {
+    const id_est = req.id_estabelecimento; // Vem do Token!
     const { tipo, ip } = req.body;
 
-    if (!tipo || !ip) {
-        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
-    }
+    // Tenta atualizar. Se não existir, você pode fazer um INSERT (Upsert)
+    const sql = `INSERT INTO impressora (id_estabelecimento, tipo, ip) 
+                 VALUES (?, ?, ?) 
+                 ON DUPLICATE KEY UPDATE tipo = ?, ip = ?`;
 
-    // Filtra pelo id_estabelecimento vindo do JWT para segurança
-    const updateSQL = 'UPDATE impressora SET tipo = ?, ip = ? WHERE id_estabelecimento = ?';
-    
-    db.query(updateSQL, [tipo, ip, id_estabelecimento], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        if (result.affectedRows === 0) {
-            return res.status(404).json({ error: 'Nenhuma impressora encontrada para este estabelecimento' });
-        }
-
-        // Busca o IP atualizado para confirmar
-        const selectSQL = 'SELECT ip FROM impressora WHERE id_estabelecimento = ?';
-        db.query(selectSQL, [id_estabelecimento], (err2, results) => {
-            if (err2) return res.status(500).json({ error: err2.message });
-            
-            return res.json({
-                message: 'Impressora atualizada',
-                ip: results[0].ip
-            });
-        });
+    db.query(sql, [id_est, tipo, ip, tipo, ip], (err, result) => {
+        if (err) return res.status(500).send(err);
+        res.status(200).json({ message: "Impressora atualizada" });
     });
 });
 
