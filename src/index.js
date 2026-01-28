@@ -436,26 +436,26 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
     });
 });
 
-  app.get("/pedidos", function (request, response) {
-      let ssql = "select p.id_pedido, p.status, date_format(p.dt_pedido, '%d/%m/%Y %H:%i:%s') as dt_pedido, ";
-      ssql += "p.vl_subtotal, p.vl_entrega, p.forma_pagamento, p.vl_total, ";
-      ssql += "p.numero_mesa, p.numero_pessoas, "; // 👈 Adiciona aqui
-      ssql += "count(i.id_item) as qtd_item, p.nome_cliente ";
-      ssql += "from pedido p ";
-      ssql += "join pedido_item i on i.id_pedido = p.id_pedido ";
-      ssql += "group by p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido, ";
-      ssql += "p.vl_subtotal, p.vl_entrega, p.vl_total, p.nome_cliente, ";
-      ssql += "p.numero_mesa, p.numero_pessoas "; // 👈 Adiciona também no GROUP BY
-      ssql += "order by p.id_pedido desc ";
+ app.get("/pedidos", token.ValidateJWT, function (request, response) {
+    let ssql = "select p.id_pedido, p.status, date_format(p.dt_pedido, '%d/%m/%Y %H:%i:%s') as dt_pedido, ";
+    ssql += "p.vl_subtotal, p.vl_entrega, p.forma_pagamento, p.vl_total, ";
+    ssql += "p.numero_mesa, p.numero_pessoas, ";
+    ssql += "count(i.id_item) as qtd_item, p.nome_cliente ";
+    ssql += "from pedido p ";
+    ssql += "join pedido_item i on i.id_pedido = p.id_pedido ";
+    ssql += "group by p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido, ";
+    ssql += "p.vl_subtotal, p.vl_entrega, p.vl_total, p.nome_cliente, ";
+    ssql += "p.numero_mesa, p.numero_pessoas ";
+    ssql += "order by p.id_pedido desc ";
 
-      db.query(ssql, function (err, result) {
-          if (err) {
-              return response.status(500).send(err);
-          } else {
-              return response.status(200).json(result);
-          }
-      });
-  });
+    db.query(ssql, function (err, result) {
+        if (err) {
+            return response.status(500).send(err);
+        } else {
+            return response.status(200).json(result);
+        }
+    });
+});
 
 
   app.get("/pedidos/itens", function (request, response) {
