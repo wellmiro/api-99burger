@@ -683,97 +683,59 @@ app.delete("/produtos/opcoes/item/:id_item", function(req, res) {
   });
 
 
-  app.get('/categorias', (request, response) => {
-      let ssql = "SELECT id_categoria, descricao, ordem, url_icone ";
-      ssql += "FROM produto_categoria ";
-      ssql += "ORDER BY ordem";
+  app.get('/categorias', validateToken, (req, response) => {
+    let ssql = "SELECT id_categoria, descricao, ordem, url_icone ";
+    ssql += "FROM produto_categoria ";
+    ssql += "WHERE id_estabelecimento = ? "; // FILTRO DE SEGURANÇA
+    ssql += "ORDER BY ordem";
 
-      db.query(ssql, function (err, result) {
-          if (err) {
-              return response.status(500).send(err);
-          } else {
-              let categorias = result.map((cat) => {
-                  return {
-                      id_categoria: cat.id_categoria,
-                      descricao: cat.descricao,
-                      ordem: cat.ordem,
-                      url_icone: cat.url_icone
-                  };
-              });
-
-              return response.status(200).json(categorias);
-          }
-      });
-  });
+    db.query(ssql, [req.id_estabelecimento], function (err, result) {
+        if (err) return response.status(500).send(err);
+        return response.status(200).json(result);
+    });
+});
 
   // POST /categorias - Cadastrar nova categoria
-  app.post('/categorias', (req, res) => {
-      const { descricao, ordem, url_icone } = req.body;
+ app.post('/categorias', validateToken, (req, res) => {
+    const { descricao, ordem, url_icone } = req.body;
+    const id_estab = req.id_estabelecimento; // Vem do Token
 
-      // Validação básica
-      if (!descricao || ordem == null || !url_icone) {
-          return res.status(400).json({ error: 'Campos obrigatórios faltando: descricao, ordem, url_icone' });
-      }
+    if (!descricao || ordem == null || !url_icone) {
+        return res.status(400).json({ error: 'Dados incompletos' });
+    }
 
-      const ssql = 'INSERT INTO produto_categoria (descricao, ordem, url_icone) VALUES (?, ?, ?)';
-      db.query(ssql, [descricao, ordem, url_icone], (err, result) => {
-          if (err) {
-              return res.status(500).json({ error: err.message });
-          } else {
-              return res.status(201).json({
-                  id_categoria: result.insertId,
-                  descricao,
-                  ordem,
-                  url_icone,
-                  message: 'Categoria cadastrada com sucesso'
-              });
-          }
-      });
-  });
+    const ssql = 'INSERT INTO produto_categoria (descricao, ordem, url_icone, id_estabelecimento) VALUES (?, ?, ?, ?)';
+    db.query(ssql, [descricao, ordem, url_icone, id_estab], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.status(201).json({ id_categoria: result.insertId, message: 'Sucesso' });
+    });
+});
 
   // PUT /categorias/:id - Atualizar categoria
-  app.put('/categorias/:id', (req, res) => {
-      const { id } = req.params;
-      const { descricao, ordem, url_icone } = req.body;
+app.put('/categorias/:id', validateToken, (req, res) => {
+    const { id } = req.params;
+    const { descricao, ordem, url_icone } = req.body;
 
-      // Validação básica
-      if (!descricao || ordem == null || !url_icone) {
-          return res.status(400).json({ error: 'Campos obrigatórios faltando: descricao, ordem, url_icone' });
-      }
-
-      const ssql = 'UPDATE produto_categoria SET descricao = ?, ordem = ?, url_icone = ? WHERE id_categoria = ?';
-      db.query(ssql, [descricao, ordem, url_icone, id], (err, result) => {
-          if (err) {
-              return res.status(500).json({ error: err.message });
-          }
-          if (result.affectedRows === 0) {
-              return res.status(404).json({ error: 'Categoria não encontrada' });
-          }
-          return res.status(200).json({
-              id_categoria: id,
-              descricao,
-              ordem,
-              url_icone,
-              message: 'Categoria atualizada com sucesso'
-          });
-      });
-  });
+    // Só atualiza se o ID da categoria pertencer ao estabelecimento do Token
+    const ssql = 'UPDATE produto_categoria SET descricao = ?, ordem = ?, url_icone = ? WHERE id_categoria = ? AND id_estabelecimento = ?';
+    db.query(ssql, [descricao, ordem, url_icone, id, req.id_estabelecimento], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Não autorizado ou não encontrado' });
+        res.status(200).json({ message: 'Atualizado com sucesso' });
+    });
+});
 
   // DELETE /categorias/:id - Apagar categoria
-  app.delete('/categorias/:id', (req, res) => {
-      const { id } = req.params;
+app.delete('/categorias/:id', validateToken, (req, res) => {
+    const { id } = req.params;
 
-      const ssql = 'DELETE FROM produto_categoria WHERE id_categoria = ?';
-      db.query(ssql, [id], (err, result) => {
-          if (err) {
-              return res.status(500).json({ error: err.message });
-          }
-          if (result.affectedRows === 0) {
-              return res.status(404).json({ error: 'Categoria não encontrada' });
-          }
-          return res.status(200).json({ message: 'Categoria deletada com sucesso' });
-      });
-  });
+    const ssql = 'DELETE FROM produto_categoria WHERE id_categoria = ? AND id_estabelecimento = ?';
+    db.query(ssql, [id, req.id_estabelecimento], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Não autorizado ou não encontrado' });
+        res.status(200).json({ message: 'Deletado com sucesso' });
+    });
+});
 
 
 
