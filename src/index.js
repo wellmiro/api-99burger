@@ -683,57 +683,100 @@ app.delete("/produtos/opcoes/item/:id_item", function(req, res) {
   });
 
 
-  app.get('/categorias', validateToken, (req, response) => {
+  // GET /categorias - Listar categorias do estabelecimento logado
+app.get('/categorias', token.ValidateJWT, (req, response) => {
+    // Pegamos o ID direto do Token decodificado (injetado pelo seu middleware)
+    const id_estabelecimento = req.id_estabelecimento;
+
+    if (!id_estabelecimento) {
+        return response.status(400).json({ error: "Estabelecimento não identificado no token." });
+    }
+
     let ssql = "SELECT id_categoria, descricao, ordem, url_icone ";
     ssql += "FROM produto_categoria ";
-    ssql += "WHERE id_estabelecimento = ? "; // FILTRO DE SEGURANÇA
+    ssql += "WHERE id_estabelecimento = ? "; 
     ssql += "ORDER BY ordem";
 
-    db.query(ssql, [req.id_estabelecimento], function (err, result) {
-        if (err) return response.status(500).send(err);
+    db.query(ssql, [id_estabelecimento], function (err, result) {
+        if (err) {
+            console.error("Erro ao buscar categorias:", err);
+            return response.status(500).json({ error: "Erro interno no servidor" });
+        }
         return response.status(200).json(result);
     });
 });
 
-  // POST /categorias - Cadastrar nova categoria
- app.post('/categorias', validateToken, (req, res) => {
+// POST /categorias - Cadastrar nova categoria
+app.post('/categorias', token.ValidateJWT, (req, res) => {
+    const id_estabelecimento = req.id_estabelecimento;
     const { descricao, ordem, url_icone } = req.body;
-    const id_estab = req.id_estabelecimento; // Vem do Token
 
     if (!descricao || ordem == null || !url_icone) {
-        return res.status(400).json({ error: 'Dados incompletos' });
+        return res.status(400).json({ error: 'Campos obrigatórios faltando: descricao, ordem, url_icone' });
     }
 
     const ssql = 'INSERT INTO produto_categoria (descricao, ordem, url_icone, id_estabelecimento) VALUES (?, ?, ?, ?)';
-    db.query(ssql, [descricao, ordem, url_icone, id_estab], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.status(201).json({ id_categoria: result.insertId, message: 'Sucesso' });
+    
+    db.query(ssql, [descricao, ordem, url_icone, id_estabelecimento], (err, result) => {
+        if (err) {
+            console.error("Erro ao cadastrar categoria:", err);
+            return res.status(500).json({ error: "Erro ao cadastrar categoria" });
+        }
+        return res.status(201).json({
+            id_categoria: result.insertId,
+            message: 'Categoria cadastrada com sucesso'
+        });
     });
 });
 
-  // PUT /categorias/:id - Atualizar categoria
-app.put('/categorias/:id', validateToken, (req, res) => {
-    const { id } = req.params;
+// PUT /categorias/:id - Atualizar categoria com trava de segurança
+app.put('/categorias/:id', token.ValidateJWT, (req, res) => {
+    const id_categoria = req.params.id;
+    const id_estabelecimento = req.id_estabelecimento;
     const { descricao, ordem, url_icone } = req.body;
 
-    // Só atualiza se o ID da categoria pertencer ao estabelecimento do Token
-    const ssql = 'UPDATE produto_categoria SET descricao = ?, ordem = ?, url_icone = ? WHERE id_categoria = ? AND id_estabelecimento = ?';
-    db.query(ssql, [descricao, ordem, url_icone, id, req.id_estabelecimento], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (result.affectedRows === 0) return res.status(404).json({ error: 'Não autorizado ou não encontrado' });
-        res.status(200).json({ message: 'Atualizado com sucesso' });
+    if (!descricao || ordem == null || !url_icone) {
+        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+    }
+
+    const ssql = `
+        UPDATE produto_categoria 
+        SET descricao = ?, ordem = ?, url_icone = ? 
+        WHERE id_categoria = ? AND id_estabelecimento = ?
+    `;
+
+    db.query(ssql, [descricao, ordem, url_icone, id_categoria, id_estabelecimento], (err, result) => {
+        if (err) {
+            console.error("Erro ao atualizar categoria:", err);
+            return res.status(500).json({ error: "Erro ao atualizar categoria" });
+        }
+        
+        if (result.affectedRows === 0) {
+            return res.status(403).json({ error: "Categoria não encontrada ou acesso negado" });
+        }
+
+        return res.status(200).json({ message: 'Categoria atualizada com sucesso' });
     });
 });
 
-  // DELETE /categorias/:id - Apagar categoria
-app.delete('/categorias/:id', validateToken, (req, res) => {
-    const { id } = req.params;
+// DELETE /categorias/:id - Apagar categoria com trava de segurança
+app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
+    const id_categoria = req.params.id;
+    const id_estabelecimento = req.id_estabelecimento;
 
     const ssql = 'DELETE FROM produto_categoria WHERE id_categoria = ? AND id_estabelecimento = ?';
-    db.query(ssql, [id, req.id_estabelecimento], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (result.affectedRows === 0) return res.status(404).json({ error: 'Não autorizado ou não encontrado' });
-        res.status(200).json({ message: 'Deletado com sucesso' });
+    
+    db.query(ssql, [id_categoria, id_estabelecimento], (err, result) => {
+        if (err) {
+            console.error("Erro ao deletar categoria:", err);
+            return res.status(500).json({ error: "Erro ao deletar categoria" });
+        }
+
+        if (result.affectedRows === 0) {
+            return res.status(403).json({ error: "Categoria não encontrada ou acesso negado" });
+        }
+
+        return res.status(200).json({ message: 'Categoria deletada com sucesso' });
     });
 });
 
