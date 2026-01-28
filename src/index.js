@@ -308,55 +308,39 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
 });
 
 
-  // Rota pública para o cardápio do cliente
-pp.get(
-  "/produtos/cardapio/opcoes/:id_produto",
-  token.ValidateJWT,
-  function (req, res) {
-
+app.get("/produtos/cardapio/opcoes/:id_produto", token.ValidateJWT, function (req, res) {
     const id_produto = req.params.id_produto;
-    const id_estabelecimento = req.id_estabelecimento; // vem do JWT
+    const id_estabelecimento = req.id_estabelecimento; 
 
-    // 1️⃣ Garante que o produto pertence ao estabelecimento do token
-    const sqlCheck = `
-        SELECT id_produto
-        FROM produto
-        WHERE id_produto = ? AND id_estabelecimento = ?
+    // Fazemos tudo em um SELECT só. Se o produto não for do estabelecimento,
+    // o WHERE vai filtrar e o result virá vazio automaticamente.
+    const ssql = `
+        SELECT 
+            o.id_opcao,
+            o.descricao AS grupo_opcao,
+            o.ind_obrigatorio,
+            i.id_item,
+            i.nome_item,
+            i.vl_item
+        FROM produto p
+        INNER JOIN produto_opcao o ON o.id_produto = p.id_produto
+        LEFT JOIN produto_opcao_item i ON i.id_opcao = o.id_opcao
+        WHERE p.id_produto = ? 
+          AND p.id_estabelecimento = ?
+          AND o.ind_ativo = 'S'
+        ORDER BY o.ordem, i.ordem
     `;
 
-    db.query(sqlCheck, [id_produto, id_estabelecimento], (err, result) => {
-        if (err) {
-            return res.status(500).json({ error: err.message });
+    db.query(ssql, [id_produto, id_estabelecimento], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+
+        // Se o array vier vazio, pode ser que o produto não exista ou 
+        // o id_estabelecimento não seja o dono.
+        if (rows.length === 0) {
+            return res.status(404).json({ message: "Nenhuma opção encontrada ou acesso negado." });
         }
 
-        if (result.length === 0) {
-            return res.status(403).json({ error: "Acesso negado a este produto." });
-        }
-
-        // 2️⃣ Busca opções e itens
-        const ssql = `
-            SELECT 
-                o.id_opcao,
-                o.descricao AS grupo_opcao,
-                o.ind_obrigatorio,
-                i.id_item,
-                i.nome_item,
-                i.vl_item
-            FROM produto_opcao o
-            LEFT JOIN produto_opcao_item i 
-                ON i.id_opcao = o.id_opcao
-            WHERE o.id_produto = ?
-              AND o.ind_ativo = 'S'
-            ORDER BY o.ordem, i.ordem
-        `;
-
-        db.query(ssql, [id_produto], (err2, rows) => {
-            if (err2) {
-                return res.status(500).json({ error: err2.message });
-            }
-
-            res.status(200).json(rows);
-        });
+        res.status(200).json(rows);
     });
 });
 
