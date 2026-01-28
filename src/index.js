@@ -1071,11 +1071,14 @@ app.post('/usuarios', (req, res) => {
 
 
   // Retorna todas as notificações não lidas de um usuário
-app.get("/notificacoes", function (request, response) {
-    // O segredo está nas ASPAS SIMPLES ao redor do A: 'A'
-    let ssql = "SELECT * FROM notificacoes WHERE status = 'A' "; 
+// 1. Retorna todas as notificações ativas ('A') do estabelecimento logado
+app.get("/notificacoes", token.ValidateJWT, function (request, response) {
+    const id_estabelecimento = request.id_estabelecimento; // Pega do Token
 
-    db.query(ssql, function (err, result) {
+    // Mantivemos o status = 'A' como no teu original
+    let ssql = "SELECT * FROM notificacoes WHERE status = 'A' AND id_estabelecimento = ? "; 
+
+    db.query(ssql, [id_estabelecimento], function (err, result) {
         if (err) {
             return response.status(500).json({ error: err.message });
         } else {
@@ -1084,24 +1087,22 @@ app.get("/notificacoes", function (request, response) {
     });
 });
 
+// 2. Marca todas as notificações do usuário logado como lidas ('L')
+// Removi o :id_usuario da URL pois pegamos direto do Token por segurança
+app.put('/notificacoes/:id_usuario', token.ValidateJWT, (req, res) => {
+    const id_usuario_url = parseInt(req.params.id_usuario, 10);
+    const id_estabelecimento = req.id_estabelecimento; // Pega do Token
 
-  // Marca todas as notificações de um usuário como lidas
-  app.put('/notificacoes/:id_usuario', (req, res) => {
-    const id_usuario = parseInt(req.params.id_usuario, 10);
-
-    if (!id_usuario) {
-      return res.status(400).json({ error: 'id_usuario é obrigatório' });
-    }
-
+    // O SQL agora protege para que o usuário só limpe as notificações 
+    // do seu próprio ID e do seu próprio estabelecimento
     const sql = `
       UPDATE notificacoes
       SET status = 'L'
-      WHERE id_usuario = ? AND status = 'N'
+      WHERE id_usuario = ? AND id_estabelecimento = ? AND status = 'A'
     `;
 
-    db.query(sql, [id_usuario], (err, results) => {
+    db.query(sql, [id_usuario_url, id_estabelecimento], (err, results) => {
       if (err) {
-        console.error(err);
         return res.status(500).json({ error: err.message });
       }
 
@@ -1110,22 +1111,25 @@ app.get("/notificacoes", function (request, response) {
         atualizadas: results.affectedRows 
       });
     });
-  });
+});
 
 
-  app.post('/pedidos/:id/atualizar_impressao', async (req, res) => {
-    const id = parseInt(req.params.id, 10);
+app.post('/pedidos/:id/atualizar_impressao', token.ValidateJWT, (req, res) => {
+    const id_pedido = req.params.id;
+    const id_estabelecimento = req.id_estabelecimento; // Segurança!
     const { numero_impressoes_desejadas, numero_impressoes_realizadas } = req.body;
 
-    if (!id || numero_impressoes_desejadas == null || numero_impressoes_realizadas == null)
-      return res.status(400).json({ error: 'Campos obrigatórios' });
+    // O WHERE agora checa o ID do pedido E se ele pertence ao estabelecimento do Token
+    const sql = `
+        UPDATE pedido 
+        SET numero_impressoes_desejadas = ?, numero_impressoes_realizadas = ? 
+        WHERE id_pedido = ? AND id_estabelecimento = ?`;
 
-    db.query(
-      `UPDATE pedido SET numero_impressoes_desejadas=?, numero_impressoes_realizadas=? WHERE id_pedido=?`,
-      [numero_impressoes_desejadas, numero_impressoes_realizadas, id],
-      (err) => err ? res.status(500).json({ error: err.message }) : res.json({ message: 'Atualizado' })
-    );
-  });
+    db.query(sql, [numero_impressoes_desejadas, numero_impressoes_realizadas, id_pedido, id_estabelecimento], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json({ message: 'Status de impressão atualizado' });
+    });
+});
 
   // Adicionar ou atualizar impressora
   // POST /impressora - Registra ou Atualiza (Upsert)
