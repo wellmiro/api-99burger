@@ -419,13 +419,19 @@ app.post("/produtos/opcoes", token.ValidateJWT, function (req, res) {
 
 // NOVA ROTA NO NODE.JS PARA INSERIR ITENS
 app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
+    // Pegamos os nomes que o Delphi envia no JSON
     const { id_opcao, nome_item, vl_item, descricao_item, ordem } = req.body;
 
-    const sql = `INSERT INTO produto_opcao_item (id_opcao, nome_item, vl_item, descricao_item, ordem) 
+    // Ajustamos o SQL para as colunas REAIS da sua tabela (id_opcao, nome_item, vl_item, descricao, ordem)
+    const sql = `INSERT INTO produto_opcao_item (id_opcao, nome_item, vl_item, descricao, ordem) 
                  VALUES (?, ?, ?, ?, ?)`;
     
+    // Passamos os valores na ordem correta
     db.query(sql, [id_opcao, nome_item, vl_item, descricao_item || '', ordem || 0], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
+        if (err) {
+            console.log("Erro no banco:", err.message); // Isso ajuda a debugar no terminal do VS Code
+            return res.status(500).json({ error: err.message });
+        }
         res.status(201).json({ id_item: result.insertId });
     });
 });
