@@ -437,18 +437,25 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
 });
 
  app.get("/pedidos", token.ValidateJWT, function (request, response) {
+    // Aqui está o segredo: o ID vem do Token, não da URL!
+    const id_est = request.id_estabelecimento; 
+
     let ssql = "select p.id_pedido, p.status, date_format(p.dt_pedido, '%d/%m/%Y %H:%i:%s') as dt_pedido, ";
     ssql += "p.vl_subtotal, p.vl_entrega, p.forma_pagamento, p.vl_total, ";
     ssql += "p.numero_mesa, p.numero_pessoas, ";
     ssql += "count(i.id_item) as qtd_item, p.nome_cliente ";
     ssql += "from pedido p ";
     ssql += "join pedido_item i on i.id_pedido = p.id_pedido ";
+    
+    // O filtro continua aqui, mas o valor vem do Token decodificado
+    ssql += "where p.id_estabelecimento = ? "; 
+    
     ssql += "group by p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido, ";
     ssql += "p.vl_subtotal, p.vl_entrega, p.vl_total, p.nome_cliente, ";
     ssql += "p.numero_mesa, p.numero_pessoas ";
     ssql += "order by p.id_pedido desc ";
 
-    db.query(ssql, function (err, result) {
+    db.query(ssql, [id_est], function (err, result) {
         if (err) {
             return response.status(500).send(err);
         } else {
