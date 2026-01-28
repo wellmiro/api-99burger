@@ -625,33 +625,34 @@ app.delete("/produtos/opcoes/item/:id_item", function(req, res) {
       });
   });
 
-  app.put("/usuarios/:id_usuario", function (request, response) {
-      const id_usuario = request.params.id_usuario;
-      const { nome, email, senha, tipo } = request.body;
+  app.put('/usuarios/:id', token.ValidateJWT, (req, res) => {
+    const id_usuario = req.params.id;
+    const id_estabelecimento = req.id_estabelecimento; // Vem do token
+    const { nome, email, senha, tipo } = req.body;
 
-      // Primeiro, busca a senha atual caso não seja enviada
-      const getSenhaSQL = `SELECT senha FROM usuario WHERE id_usuario = ?`;
-      db.query(getSenhaSQL, [id_usuario], function (err, result) {
-          if (err) return response.status(500).send(err);
-          if (result.length === 0) return response.status(404).json({ message: "Usuário não encontrado" });
+    if (!nome || !email || !tipo) {
+        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
+    }
 
-          const senhaAtual = result[0].senha;
-          const novaSenha = (senha && senha.trim() !== "") ? senha : senhaAtual;
+    const sql = `
+        UPDATE usuario 
+        SET nome = ?, email = ?, senha = ?, tipo = ? 
+        WHERE id_usuario = ? AND id_estabelecimento = ?
+    `;
 
-          // Atualiza os campos
-          const updateSQL = `
-              UPDATE usuario
-              SET nome = ?, email = ?, senha = ?, tipo = ?
-              WHERE id_usuario = ?
-          `;
+    db.query(sql, [nome, email, senha, tipo, id_usuario, id_estabelecimento], (err, result) => {
+        if (err) {
+            console.error("Erro ao atualizar usuário:", err);
+            return res.status(500).json({ error: "Erro ao atualizar usuário" });
+        }
+        
+        if (result.affectedRows === 0) {
+            return res.status(403).json({ error: "Usuário não encontrado ou acesso negado" });
+        }
 
-          db.query(updateSQL, [nome, email, novaSenha, tipo, id_usuario], function (err2) {
-              if (err2) return response.status(500).send(err2);
-
-              return response.status(200).json({ message: "Usuário atualizado com sucesso" });
-          });
-      });
-  });
+        return res.status(200).json({ message: 'Usuário atualizado com sucesso' });
+    });
+});
 
 
   app.get("/pedidos/itens_lista", function (request, response) {
@@ -974,31 +975,34 @@ app.get("/pedidos/:id_pedido", (req, res) => {
 
 
 app.post('/usuarios', (req, res) => {
-    // Adicionamos o id_estabelecimento no corpo da requisição (vindo do seu front)
-    const { nome, email, senha, id_estabelecimento } = req.body;
+    // Pegamos os dados do corpo da requisição
+    const { nome, email, senha, id_estabelecimento, tipo } = req.body;
 
-    // Validamos se veio tudo, incluindo o estabelecimento
+    // Validação básica
     if (!nome || !email || !senha || !id_estabelecimento) {
-        return res.status(400).json({ error: 'Campos obrigatórios faltando (nome, email, senha, estabelecimento)' });
+        return res.status(400).json({ error: 'Campos obrigatórios faltando' });
     }
 
-    // SQL com id_estabelecimento incluído
+    // O 'tipo' aqui é opcional, se não vier, vira 'padrao'
+    const tipoFinal = tipo || 'padrao';
+
     const sql = `
-        INSERT INTO usuario (nome, email, senha, dt_cadastro, status, id_estabelecimento) 
-        VALUES (?, ?, ?, NOW(), 'A', ?)
+        INSERT INTO usuario (nome, email, senha, dt_cadastro, status, id_estabelecimento, tipo) 
+        VALUES (?, ?, ?, NOW(), 'A', ?, ?)
     `;
 
-    db.query(sql, [nome, email, senha, id_estabelecimento], (err, result) => {
+    db.query(sql, [nome, email, senha, id_estabelecimento, tipoFinal], (err, result) => {
         if (err) {
-            console.error("Erro ao cadastrar:", err);
+            console.error("Erro ao cadastrar usuário:", err);
             return res.status(500).json({ error: 'Erro ao cadastrar usuário' });
         }
         
+        // Retornamos os dados criados (menos a senha por segurança)
         res.status(201).json({ 
             id_usuario: result.insertId, 
             nome, 
             email, 
-            status: 'A',
+            tipo: tipoFinal,
             id_estabelecimento 
         });
     });
