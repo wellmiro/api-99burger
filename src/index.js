@@ -465,7 +465,11 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
 });
 
 
-  app.get("/pedidos/itens", function (request, response) {
+  // 1. ADICIONADO: token.ValidateJWT para segurança
+app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
+      
+      // 2. ADICIONADO: Pegar o ID da empresa que vem do Token decodificado
+      const id_estabelecimento = request.id_estabelecimento;
 
       let ssql = `
           SELECT 
@@ -493,10 +497,12 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
           JOIN pedido_item i ON i.id_pedido = p.id_pedido
           JOIN produto o ON o.id_produto = i.id_produto
           LEFT JOIN produto_categoria c ON c.id_categoria = o.id_categoria
+          WHERE p.id_estabelecimento = ? 
           ORDER BY p.dt_pedido
       `;
 
-      db.query(ssql, function (err, result) {
+      // 3. ALTERADO: Passando o parâmetro id_estabelecimento para a query
+      db.query(ssql, [id_estabelecimento], function (err, result) {
           if (err) {
               return response.status(500).send(err);
           } else {
@@ -524,10 +530,9 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
                   }
               });
 
-              // Adicionar os itens em cada pedido, agora com categoria
+              // Adicionar os itens em cada pedido
               pedidos.forEach((ped) => {
                   let itens = [];
-
                   result.forEach((pedResult) => {
                       if (pedResult.id_pedido == ped.id_pedido) {
                           itens.push({
@@ -543,14 +548,13 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
                           });
                       }
                   });
-
                   ped.itens = itens;
               });
 
               return response.status(200).json(pedidos);
           }
       });
-  });
+});
 
 
  app.get("/pedidos/resumo", token.ValidateJWT, function (request, response) {
