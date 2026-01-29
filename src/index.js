@@ -336,12 +336,12 @@ app.get("/produtos/cardapio/opcoes/:id_produto", token.ValidateJWT, function (re
     `;
 
     db.query(ssql, [id_produto, id_estabelecimento], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-
-        if (rows.length === 0) {
-            return res.status(404).json({ message: "Nenhum dado encontrado." });
+        if (err) {
+            return res.status(500).json({ error: err.message });
         }
 
+        // Se rows estiver vazio, ele manda [] e status 200. 
+        // O Delphi vai apenas ignorar e não vai estourar Exception.
         res.status(200).json(rows);
     });
 });
