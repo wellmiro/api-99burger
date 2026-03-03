@@ -1357,6 +1357,36 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
   });
 });
 
+app.get("/cardapio_digital/:id_estabelecimento", function (req, res) {
+
+    const id_estabelecimento = req.params.id_estabelecimento;
+
+    const ssql = `
+        SELECT 
+            p.id_produto,
+            p.nome,
+            p.descricao,
+            p.url_foto,
+            p.preco,
+            c.descricao AS categoria,
+            c.id_categoria
+        FROM produto p
+        JOIN produto_categoria c 
+            ON c.id_categoria = p.id_categoria
+        WHERE p.id_estabelecimento = ?
+        ORDER BY c.ordem
+    `;
+
+    db.query(ssql, [id_estabelecimento], function (err, result) {
+        if (err) {
+            return res.status(500).json({ error: err.message });
+        }
+
+        return res.json(result);
+    });
+
+});
+
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
