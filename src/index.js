@@ -1357,11 +1357,14 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
   });
 });
 
-app.get("/cardapio_digital/:id_estabelecimento", function (req, res) {
+// Endpoint para o Cardápio Digital (Aberto ao público)
+app.get("/cardapio_digital/:id", function (request, response) {
+    
+    // O :id aqui agora será o SLUG (ex: cardapio-kadds-burguers)
+    const slug = request.params.id;
 
-    const id_estabelecimento = req.params.id_estabelecimento;
-
-    const ssql = `
+    // SQL que busca os produtos filtrando pelo SLUG do estabelecimento
+    let ssql = `
         SELECT 
             p.id_produto,
             p.nome,
@@ -1369,23 +1372,41 @@ app.get("/cardapio_digital/:id_estabelecimento", function (req, res) {
             p.url_foto,
             p.preco,
             c.descricao AS categoria,
-            c.id_categoria
+            c.id_categoria,
+            e.nome as nome_estabelecimento,
+            e.logo as url_logo
         FROM produto p
-        JOIN produto_categoria c 
-            ON c.id_categoria = p.id_categoria
-        WHERE p.id_estabelecimento = ?
+        JOIN produto_categoria c ON c.id_categoria = p.id_categoria
+        JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+        WHERE e.slug = ? 
         ORDER BY c.ordem
     `;
 
-    db.query(ssql, [id_estabelecimento], function (err, result) {
+    db.query(ssql, [slug], function (err, result) {
         if (err) {
-            return res.status(500).json({ error: err.message });
+            return response.status(500).json({ error: "Erro ao buscar cardápio" });
         }
 
-        return res.json(result);
-    });
+        if (result.length === 0) {
+            return response.status(404).json({ error: "Cardápio não encontrado" });
+        }
 
-});
+JavaScript
+        const produtos = result.map(p => ({
+            id_produto: p.id_produto,
+            nome: p.nome,
+            descricao: p.descricao,
+            url_foto: p.url_foto,
+            preco: parseFloat(p.preco),
+            categoria: p.categoria,
+            id_categoria: p.id_categoria,
+            nome_estabelecimento: p.nome_estabelecimento,
+            url_logo: p.url_logo
+        }));
+
+        return response.status(200).json(produtos);
+    }); // <--- FECHA O db.query
+}); // <--- FECHA O app.get
 
 
 const port = process.env.PORT || 3000;
