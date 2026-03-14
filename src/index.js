@@ -1357,7 +1357,7 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
   });
 });
 
-// Endpoint para o Cardápio Digital (Aberto ao público)
+// Endpoint para o Cardápio Digital (Aberto ao público via SLUG)
 app.get("/cardapio_digital/:id", function (request, response) {
     
     // O :id aqui agora será o SLUG (ex: cardapio-kadds-burguers)
@@ -1384,6 +1384,7 @@ app.get("/cardapio_digital/:id", function (request, response) {
 
     db.query(ssql, [slug], function (err, result) {
         if (err) {
+            console.error("Erro ao buscar cardápio:", err);
             return response.status(500).json({ error: "Erro ao buscar cardápio" });
         }
 
@@ -1391,7 +1392,7 @@ app.get("/cardapio_digital/:id", function (request, response) {
             return response.status(404).json({ error: "Cardápio não encontrado" });
         }
 
-JavaScript
+        // Formatação dos dados para o React
         const produtos = result.map(p => ({
             id_produto: p.id_produto,
             nome: p.nome,
@@ -1405,8 +1406,8 @@ JavaScript
         }));
 
         return response.status(200).json(produtos);
-    }); // <--- FECHA O db.query
-}); // <--- FECHA O app.get
+    }); 
+});// <--- FECHA O app.get
 
 
 const port = process.env.PORT || 3000;
