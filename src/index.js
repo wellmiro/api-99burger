@@ -1409,6 +1409,123 @@ app.get("/cardapio_digital/:id", function (request, response) {
     }); 
 });// <--- FECHA O app.get
 
+// Listar categorias de despesa
+app.get("/despesas/categorias", token.ValidateJWT, function (req, res) {
+    const id_estabelecimento = req.id_estabelecimento;
+    const ssql = "SELECT id_categoria, descricao FROM despesa_categoria ORDER BY descricao";
+
+    db.query(ssql, function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(200).json(result);
+    });
+});
+
+// Cadastrar nova categoria de despesa
+app.post("/despesas/categorias", token.ValidateJWT, function (req, res) {
+    const { descricao } = req.body;
+    const ssql = "INSERT INTO despesa_categoria (descricao) VALUES (?)";
+
+    db.query(ssql, [descricao], function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(201).json({ id_categoria: result.insertId });
+    });
+});
+
+// Listar Despesas com Filtro de Data e Status
+app.get("/despesas", token.ValidateJWT, function (req, res) {
+    const id_estabelecimento = req.id_estabelecimento;
+    const { dt_inicio, dt_fim, status } = req.query;
+
+    let params = [id_estabelecimento];
+    let ssql = `
+        SELECT d.*, c.descricao as categoria_nome 
+        FROM despesa d
+        LEFT JOIN despesa_categoria c ON (c.id_categoria = d.id_categoria)
+        WHERE d.id_estabelecimento = ? `;
+
+    if (dt_inicio && dt_fim) {
+        ssql += " AND d.data_vencimento BETWEEN ? AND ? ";
+        params.push(dt_inicio, dt_fim);
+    }
+
+    if (status) {
+        ssql += " AND d.status = ? ";
+        params.push(status);
+    }
+
+    ssql += " ORDER BY d.data_vencimento ASC";
+
+    db.query(ssql, params, function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(200).json(result);
+    });
+});
+
+// Cadastrar Despesa
+app.post("/despesas", token.ValidateJWT, function (req, res) {
+    const id_estabelecimento = req.id_estabelecimento;
+    const { descricao, valor, data_vencimento, status, id_categoria, id_usuario } = req.body;
+
+    const ssql = `
+        INSERT INTO despesa (descricao, valor, data_vencimento, status, id_categoria, id_usuario, id_estabelecimento)
+        VALUES (?, ?, ?, ?, ?, ?, ?)`;
+
+    const params = [descricao, valor, data_vencimento, status || 'A', id_categoria, id_usuario, id_estabelecimento];
+
+    db.query(ssql, params, function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(201).json({ id_despesa: result.insertId, message: "Despesa lançada!" });
+    });
+});
+
+// Baixar/Pagar Despesa (Alterar Status)
+app.put("/despesas/:id/pagar", token.ValidateJWT, function (req, res) {
+    const id_despesa = req.params.id;
+    const id_estabelecimento = req.id_estabelecimento;
+    const data_hoje = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+    const ssql = `
+        UPDATE despesa 
+        SET status = 'P', data_pagamento = ? 
+        WHERE id_despesa = ? AND id_estabelecimento = ?`;
+
+    db.query(ssql, [data_hoje, id_despesa, id_estabelecimento], function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+        if (result.affectedRows === 0) return res.status(403).json({ error: "Acesso negado ou registro não existe" });
+        
+        return res.status(200).json({ message: "Conta baixada com sucesso!" });
+    });
+});
+
+// Excluir Despesa
+app.delete("/despesas/:id", token.ValidateJWT, function (req, res) {
+    const id_despesa = req.params.id;
+    const id_estabelecimento = req.id_estabelecimento;
+
+    const ssql = "DELETE FROM despesa WHERE id_despesa = ? AND id_estabelecimento = ?";
+
+    db.query(ssql, [id_despesa, id_estabelecimento], function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(200).json({ message: "Removido!" });
+    });
+});
+
+app.get("/financeiro/resumo", token.ValidateJWT, function (req, res) {
+    const id_est = req.id_estabelecimento;
+    const { mes, ano } = req.query; // Ex: ?mes=03&ano=2026
+
+    const ssql = `
+        SELECT 
+            (SELECT SUM(vl_total) FROM pedido WHERE id_estabelecimento = ? AND MONTH(dt_pedido) = ? AND YEAR(dt_pedido) = ? AND status <> 'C') as total_vendas,
+            (SELECT SUM(valor) FROM despesa WHERE id_estabelecimento = ? AND MONTH(data_vencimento) = ? AND YEAR(data_vencimento) = ? AND status = 'P') as total_despesas_pagas
+    `;
+
+    db.query(ssql, [id_est, mes, ano, id_est, mes, ano], function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(200).json(result[0]);
+    });
+});
+
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
