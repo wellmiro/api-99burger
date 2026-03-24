@@ -1182,74 +1182,58 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
 
 
   app.post('/pedidos', token.ValidateJWT, async (req, res) => {
-  const p = req.body;
-  // Adicionei p.id_estabelecimento na validação inicial
-  if (!p.id_usuario || !p.id_estabelecimento || !p.itens?.length) 
-    return res.status(400).json({ error: 'Dados faltando (id_usuario, id_estabelecimento ou itens)' });
+    const p = req.body;
 
-  try {
-    const nomeCliente = p.nome_cliente?.trim() || '-';
-    const enderecoEntrega = p.endereco_entrega || null;
-    const dinheiro = p.dinheiro || 0;
-    const troco = p.troco || 0;
+    if (!p.id_usuario || !p.id_estabelecimento || !p.itens?.length) {
+        return res.status(400).json({ error: 'Dados faltando (id_usuario, id_estabelecimento ou itens)' });
+    }
 
-    const agora = new Date();
-    agora.setHours(agora.getHours() - 3);
-    const dtPedidoBrasilia = agora.toISOString().slice(0, 19).replace('T', ' ');
+    try {
+        const nomeCliente = p.nome_cliente?.trim() || '-';
+        const enderecoEntrega = p.endereco_entrega || null;
+        const dinheiro = p.dinheiro || 0;
+        const troco = p.troco || 0;
+        const obsGeral = p.observacao || null;
 
-    // Inserção do pedido COM id_estabelecimento
-    const result = await new Promise((r, j) =>
-      db.query(
-        `INSERT INTO pedido 
-        (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, forma_pagamento, vl_total, numero_mesa, numero_pessoas, status, dt_pedido, endereco_entrega, dinheiro, troco)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, // Adicionado um '?'
-        [
-          p.id_usuario,
-          p.id_estabelecimento, // <--- INSERIDO AQUI
-          nomeCliente,
-          p.vl_subtotal || 0,
-          p.vl_entrega || 0,
-          p.forma_pagamento || null,
-          p.vl_total || 0,
-          p.numero_mesa || null,
-          p.numero_pessoas || null,
-          'A',
-          dtPedidoBrasilia,
-          enderecoEntrega,
-          dinheiro,
-          troco
-        ],
-        (err, res) => err ? j(err) : r(res)
-      )
-    );
+        const agora = new Date();
+        agora.setHours(agora.getHours() - 3);
+        const dtPedidoBrasilia = agora.toISOString().slice(0, 19).replace('T', ' ');
 
-    const idPedido = result.insertId;
+        const result = await new Promise((r, j) =>
+            db.query(
+                `INSERT INTO pedido 
+                (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, forma_pagamento, vl_total, numero_mesa, numero_pessoas, status, dt_pedido, endereco_entrega, observacao, dinheiro, troco)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                [
+                    p.id_usuario, p.id_estabelecimento, nomeCliente, p.vl_subtotal || 0,
+                    p.vl_entrega || 0, p.forma_pagamento || null, p.vl_total || 0,
+                    p.numero_mesa || null, p.numero_pessoas || null, 'A',
+                    dtPedidoBrasilia, enderecoEntrega, obsGeral, dinheiro, troco
+                ],
+                (err, res) => err ? j(err) : r(res)
+            )
+        );
 
-    // Inserção dos itens (continua igual)
-    const itens = p.itens.map(i => [
-      idPedido,
-      i.id_produto,
-      i.qtd,
-      i.vl_unitario,
-      i.vl_total,
-      i.observacao || null
-    ]);
+        const idPedido = result.insertId;
 
-    await new Promise((r, j) =>
-      db.query(
-        `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`,
-        [itens],
-        err => err ? j(err) : r()
-      )
-    );
+        const itens = p.itens.map(i => [
+            idPedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null
+        ]);
 
-    // ... restante do código (impressão e response)
-    res.status(201).json({ id_pedido: idPedido, message: "Pedido cadastrado com sucesso" });
+        await new Promise((r, j) =>
+            db.query(
+                `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`,
+                [itens],
+                err => err ? j(err) : r()
+            )
+        );
 
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
+        res.status(201).json({ id_pedido: idPedido, message: "Pedido cadastrado com sucesso" });
+
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    } // Aqui fecha o catch
+}); // Aqui fecha o app.post corretamente
 
  app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
   const id_pedido = parseInt(req.params.id, 10);
