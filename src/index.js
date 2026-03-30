@@ -1190,36 +1190,63 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
   app.post('/pedidos', token.ValidateJWT, async (req, res) => {
     const p = req.body;
 
-    // Apenas a validação que você pediu: local_consumo obrigatório
-    if (!p.local_consumo) {
-        return res.status(400).json({ error: 'Campo local_consumo é obrigatório!' });
-    }
+    // Removemos a obrigatoriedade. Se não vier, o sistema segue o fluxo.
+    // Opcional: Você pode definir um padrão caso queira: const localConsumo = p.local_consumo || 'LOCAL';
 
     try {
         const agora = new Date();
         agora.setHours(agora.getHours() - 3);
         const dtPedidoBrasilia = agora.toISOString().slice(0, 19).replace('T', ' ');
 
-        // INSERT simples no banco
         const result = await new Promise((r, j) =>
             db.query(
                 `INSERT INTO pedido 
                 (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, forma_pagamento, vl_total, numero_mesa, numero_pessoas, status, dt_pedido, endereco_entrega, observacao, dinheiro, troco, local_consumo)
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 [
-                    p.id_usuario, p.id_estabelecimento, p.nome_cliente, p.vl_subtotal || 0,
-                    p.vl_entrega || 0, p.forma_pagamento, p.vl_total || 0,
-                    p.numero_mesa || null, p.numero_pessoas || null, 'A',
-                    dtPedidoBrasilia, p.endereco_entrega, p.observacao, p.dinheiro, p.troco, p.local_consumo
+                    p.id_usuario, 
+                    p.id_estabelecimento, 
+                    p.nome_cliente || '-', 
+                    p.vl_subtotal || 0,
+                    p.vl_entrega || 0, 
+                    p.forma_pagamento || null, 
+                    p.vl_total || 0,
+                    p.numero_mesa || null, 
+                    p.numero_pessoas || null, 
+                    'A',
+                    dtPedidoBrasilia, 
+                    p.endereco_entrega || null, 
+                    p.observacao || null, 
+                    p.dinheiro || 0, 
+                    p.troco || 0, 
+                    p.local_consumo || null // Se não vier, grava nulo ou o padrão do banco
                 ],
                 (err, res) => err ? j(err) : r(res)
             )
         );
 
-        // ... código dos itens (mantém como estava) ...
+        const idPedido = result.insertId;
 
-        res.status(201).json({ message: "Pedido salvo com sucesso" });
+        // Inserção dos itens (mantenha a lógica abaixo conforme seu código original)
+        if (p.itens && p.itens.length > 0) {
+            const itens = p.itens.map(i => [
+                idPedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null
+            ]);
+
+            await new Promise((r, j) =>
+                db.query(
+                    `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`,
+                    [itens],
+                    err => err ? j(err) : r()
+                )
+            );
+        }
+
+        // Retornamos o id_pedido para que o Delphi possa usar se precisar
+        res.status(201).json({ id_pedido: idPedido, message: "Pedido salvo com sucesso" });
+
     } catch (e) {
+        console.error(e);
         res.status(500).json({ error: e.message });
     }
 });
