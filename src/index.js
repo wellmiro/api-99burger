@@ -437,22 +437,22 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
 });
 
  app.get("/pedidos", token.ValidateJWT, function (request, response) {
-    // Aqui está o segredo: o ID vem do Token, não da URL!
+    // O ID vem do Token decodificado pelo middleware
     const id_est = request.id_estabelecimento; 
 
     let ssql = "select p.id_pedido, p.status, date_format(p.dt_pedido, '%d/%m/%Y %H:%i:%s') as dt_pedido, ";
     ssql += "p.vl_subtotal, p.vl_entrega, p.forma_pagamento, p.vl_total, ";
-    ssql += "p.numero_mesa, p.numero_pessoas, ";
+    ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo, "; // <-- ADICIONADO AQUI
     ssql += "count(i.id_item) as qtd_item, p.nome_cliente ";
     ssql += "from pedido p ";
     ssql += "join pedido_item i on i.id_pedido = p.id_pedido ";
     
-    // O filtro continua aqui, mas o valor vem do Token decodificado
+    // Filtro pelo estabelecimento vindo do Token
     ssql += "where p.id_estabelecimento = ? "; 
     
     ssql += "group by p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido, ";
     ssql += "p.vl_subtotal, p.vl_entrega, p.vl_total, p.nome_cliente, ";
-    ssql += "p.numero_mesa, p.numero_pessoas ";
+    ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo "; // <-- ADICIONADO AO GROUP BY
     ssql += "order by p.id_pedido desc ";
 
     db.query(ssql, [id_est], function (err, result) {
@@ -569,6 +569,7 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
               p.vl_entrega,
               p.dinheiro,
               p.troco,
+              p.local_consumo, -- <--- NOVO CAMPO ADICIONADO
               p.endereco_entrega,
               u.nome AS nome_login,
               p.rota,
@@ -1100,10 +1101,15 @@ app.put("/notificacoes/:id", token.ValidateJWT, function (request, response) {
 
 app.post('/pedidos/:id/atualizar_impressao', token.ValidateJWT, (req, res) => {
     const id_pedido = req.params.id;
-    const id_estabelecimento = req.id_estabelecimento; // Segurança!
+    const id_estabelecimento = req.id_estabelecimento; 
     const { numero_impressoes_desejadas, numero_impressoes_realizadas } = req.body;
 
-    // O WHERE agora checa o ID do pedido E se ele pertence ao estabelecimento do Token
+    // --- SUA NOVA VALIDAÇÃO NA LINHA 1106 ---
+    if (numero_impressoes_desejadas === undefined) {
+        return res.status(400).json({ error: 'Faltando dados de impressão' });
+    }
+    // ----------------------------------------
+
     const sql = `
         UPDATE pedido 
         SET numero_impressoes_desejadas = ?, numero_impressoes_realizadas = ? 
@@ -1184,8 +1190,9 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
   app.post('/pedidos', token.ValidateJWT, async (req, res) => {
     const p = req.body;
 
-    if (!p.id_usuario || !p.id_estabelecimento || !p.itens?.length) {
-        return res.status(400).json({ error: 'Dados faltando (id_usuario, id_estabelecimento ou itens)' });
+    // Adicionada a validação do local_consumo como obrigatório
+    if (!p.id_usuario || !p.id_estabelecimento || !p.itens?.length || !p.local_consumo) {
+        return res.status(400).json({ error: 'Dados faltando (id_usuario, id_estabelecimento, itens ou local_consumo)' });
     }
 
     try {
@@ -1194,6 +1201,7 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
         const dinheiro = p.dinheiro || 0;
         const troco = p.troco || 0;
         const obsGeral = p.observacao || null;
+        const localConsumo = p.local_consumo; // <--- NOVO CAMPO
 
         const agora = new Date();
         agora.setHours(agora.getHours() - 3);
@@ -1202,13 +1210,13 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
         const result = await new Promise((r, j) =>
             db.query(
                 `INSERT INTO pedido 
-                (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, forma_pagamento, vl_total, numero_mesa, numero_pessoas, status, dt_pedido, endereco_entrega, observacao, dinheiro, troco)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+                (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, forma_pagamento, vl_total, numero_mesa, numero_pessoas, status, dt_pedido, endereco_entrega, observacao, dinheiro, troco, local_consumo)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, // Adicionado um "?"
                 [
                     p.id_usuario, p.id_estabelecimento, nomeCliente, p.vl_subtotal || 0,
                     p.vl_entrega || 0, p.forma_pagamento || null, p.vl_total || 0,
                     p.numero_mesa || null, p.numero_pessoas || null, 'A',
-                    dtPedidoBrasilia, enderecoEntrega, obsGeral, dinheiro, troco
+                    dtPedidoBrasilia, enderecoEntrega, obsGeral, dinheiro, troco, localConsumo // <--- ADICIONADO AQUI
                 ],
                 (err, res) => err ? j(err) : r(res)
             )
@@ -1232,8 +1240,8 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
 
     } catch (e) {
         res.status(500).json({ error: e.message });
-    } // Aqui fecha o catch
-}); // Aqui fecha o app.post corretamente
+    }
+});// Aqui fecha o app.post corretamente
 
  app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
   const id_pedido = parseInt(req.params.id, 10);
