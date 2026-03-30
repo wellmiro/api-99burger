@@ -1190,18 +1190,20 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
   app.post('/pedidos', token.ValidateJWT, async (req, res) => {
     const p = req.body;
 
-    // Adicionada a validação do local_consumo como obrigatório
-    if (!p.id_usuario || !p.id_estabelecimento || !p.itens?.length || !p.local_consumo) {
-        return res.status(400).json({ error: 'Dados faltando (id_usuario, id_estabelecimento, itens ou local_consumo)' });
+    // --- VALIDAÇÃO COM MENSAGEM PERSONALIZADA ---
+    if (!p.local_consumo) {
+        return res.status(400).json({ 
+            error: 'ERRO DE VALIDAÇÃO: Está faltando o local de consumo (LOCAL, RETIRADA ou ENTREGA)! Verifique o clique no botão.' 
+        });
+    }
+
+    if (!p.id_usuario || !p.id_estabelecimento || !p.itens?.length) {
+        return res.status(400).json({ error: 'Dados essenciais faltando (ID, Estabelecimento ou Itens).' });
     }
 
     try {
         const nomeCliente = p.nome_cliente?.trim() || '-';
-        const enderecoEntrega = p.endereco_entrega || null;
-        const dinheiro = p.dinheiro || 0;
-        const troco = p.troco || 0;
-        const obsGeral = p.observacao || null;
-        const localConsumo = p.local_consumo; // <--- NOVO CAMPO
+        const localConsumo = p.local_consumo.toUpperCase(); // Força maiúsculo para o banco
 
         const agora = new Date();
         agora.setHours(agora.getHours() - 3);
@@ -1211,22 +1213,20 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
             db.query(
                 `INSERT INTO pedido 
                 (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, forma_pagamento, vl_total, numero_mesa, numero_pessoas, status, dt_pedido, endereco_entrega, observacao, dinheiro, troco, local_consumo)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, // Adicionado um "?"
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
                 [
                     p.id_usuario, p.id_estabelecimento, nomeCliente, p.vl_subtotal || 0,
                     p.vl_entrega || 0, p.forma_pagamento || null, p.vl_total || 0,
                     p.numero_mesa || null, p.numero_pessoas || null, 'A',
-                    dtPedidoBrasilia, enderecoEntrega, obsGeral, dinheiro, troco, localConsumo // <--- ADICIONADO AQUI
+                    dtPedidoBrasilia, p.endereco_entrega || null, p.observacao || null, 
+                    p.dinheiro || 0, p.troco || 0, localConsumo
                 ],
                 (err, res) => err ? j(err) : r(res)
             )
         );
 
         const idPedido = result.insertId;
-
-        const itens = p.itens.map(i => [
-            idPedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null
-        ]);
+        const itens = p.itens.map(i => [idPedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null]);
 
         await new Promise((r, j) =>
             db.query(
@@ -1239,62 +1239,64 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
         res.status(201).json({ id_pedido: idPedido, message: "Pedido cadastrado com sucesso" });
 
     } catch (e) {
+        console.error("Erro ao inserir pedido:", e);
         res.status(500).json({ error: e.message });
     }
 });// Aqui fecha o app.post corretamente
 
  app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
-  const id_pedido = parseInt(req.params.id, 10);
-  const { itens, id_estabelecimento } = req.body; // <--- RECEBENDO O ID AQUI
+    const id_pedido = parseInt(req.params.id, 10);
+    const { itens, id_estabelecimento } = req.body;
 
-  // Adicionei a validação do id_estabelecimento
-  if (!id_pedido || !Array.isArray(itens) || !itens.length || !id_estabelecimento) {
-    return res.status(400).json({ error: 'ID do pedido, itens e id_estabelecimento são obrigatórios' });
-  }
-
-  try {
-    // 1. Inserir itens (Não precisa de id_est., pois vincula ao id_pedido)
-    const valores = itens.map(i => [
-      id_pedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null
-    ]);
-
-    await new Promise((resolve, reject) => {
-      const sqlInserir = `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`;
-      db.query(sqlInserir, [valores], (err, result) => err ? reject(err) : resolve(result));
-    });
-
-    const totalItensNovos = itens.reduce((acc, i) => acc + (i.vl_total || 0), 0);
-
-    // 2. Atualiza o total filtrando por id_pedido E id_estabelecimento (SEGURANÇA)
-    await new Promise((resolve, reject) => {
-      const sqlAtualizaTotal = `
-        UPDATE pedido
-        SET vl_total = vl_total + ?
-        WHERE id_pedido = ? AND id_estabelecimento = ?;
-      `;
-      db.query(sqlAtualizaTotal, [totalItensNovos, id_pedido, id_estabelecimento], (err) => err ? reject(err) : resolve());
-    });
-
-    // 3. Busca dados do pedido garantindo que seja do estabelecimento correto
-    const pedido = await new Promise((resolve, reject) => {
-      db.query(
-        "SELECT nome_cliente, vl_total FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?",
-        [id_pedido, id_estabelecimento],
-        (err, result) => err ? reject(err) : resolve(result[0])
-      );
-    });
-
-    if (!pedido) {
-       return res.status(404).json({ error: 'Pedido não encontrado para este estabelecimento' });
+    if (!id_pedido || !Array.isArray(itens) || !itens.length || !id_estabelecimento) {
+        return res.status(400).json({ error: 'Dados incompletos para adicionar itens.' });
     }
 
-    // ... (restante do código de impressão e resposta continua igual)
-    
-    res.status(201).json({ message: 'Itens adicionados com sucesso', total_itens_novos: totalItensNovos });
+    try {
+        const valores = itens.map(i => [
+            id_pedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null
+        ]);
 
-  } catch (err) {
-    res.status(500).json({ message: 'Erro ao adicionar itens', error: err.message });
-  }
+        // 1. Inserir os novos itens
+        await new Promise((resolve, reject) => {
+            const sqlInserir = `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`;
+            db.query(sqlInserir, [valores], (err, result) => err ? reject(err) : resolve(result));
+        });
+
+        const totalItensNovos = itens.reduce((acc, i) => acc + (Number(i.vl_total) || 0), 0);
+
+        // 2. Atualiza o total do pedido no banco
+        await new Promise((resolve, reject) => {
+            const sqlAtualizaTotal = `
+                UPDATE pedido
+                SET vl_total = vl_total + ?
+                WHERE id_pedido = ? AND id_estabelecimento = ?;
+            `;
+            db.query(sqlAtualizaTotal, [totalItensNovos, id_pedido, id_estabelecimento], (err) => err ? reject(err) : resolve());
+        });
+
+        // 3. Busca dados para confirmar (e futuramente imprimir)
+        const pedido = await new Promise((resolve, reject) => {
+            db.query(
+                "SELECT nome_cliente, vl_total, local_consumo FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?",
+                [id_pedido, id_estabelecimento],
+                (err, result) => err ? reject(err) : resolve(result[0])
+            );
+        });
+
+        if (!pedido) {
+            return res.status(404).json({ error: 'Pedido não localizado.' });
+        }
+
+        res.status(201).json({ 
+            message: 'Itens adicionados com sucesso', 
+            novo_total: pedido.vl_total,
+            local: pedido.local_consumo 
+        });
+
+    } catch (err) {
+        res.status(500).json({ message: 'Erro interno', error: err.message });
+    }
 });
 
 
