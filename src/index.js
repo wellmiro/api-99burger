@@ -1312,19 +1312,20 @@ app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
 
 app.post('/pedidos/publico', async (req, res) => {
     const p = req.body;
+    console.log("Dados recebidos no payload:", p); // Log para conferir o que vem do front
 
     try {
         // 1. Busca o ID do estabelecimento
         const estab = await new Promise((r, j) =>
             db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [p.slug], 
-            (err, result) => err ? j(err) : r(result[0]))
+            (err, result) => err ? j(err) : r(result ? result[0] : null))
         );
 
         if (!estab) return res.status(404).json({ error: "Estabelecimento não encontrado." });
 
         const dtPedido = new Date().toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).replace('T', ' ');
 
-        // 2. Insere o Pedido
+        // 2. Insere o Pedido - Note que usei IFNULL ou valores padrão para TUDO
         const sqlPedido = `
             INSERT INTO pedido 
             (id_estabelecimento, id_usuario, nome_cliente, dt_pedido, vl_subtotal, vl_entrega, vl_total, 
@@ -1334,17 +1335,17 @@ app.post('/pedidos/publico', async (req, res) => {
         const result = await new Promise((r, j) =>
             db.query(sqlPedido, [
                 estab.id_estabelecimento,
-                p.id_usuario ?? 0, // <--- O SEGREDO ESTÁ AQUI. Se vier vazio, vira 0. Se vier 0, continua 0!
+                p.id_usuario ?? 0, 
                 p.nome_cliente || 'Cliente Web',
                 dtPedido,
                 p.vl_subtotal || 0,
                 p.vl_entrega || 0,
                 p.vl_total || 0,
                 'A', 
-                p.forma_pagamento || 'PIX',
-                p.observacao || null,
-                p.endereco_entrega || null,
-                p.rota || null,
+                p.forma_pagamento || 'A combinar',
+                p.observacao || '',
+                p.endereco_entrega || '',
+                p.rota || '',
                 p.dinheiro || 0,
                 p.troco || 0,
                 p.local_consumo || 'DELIVERY'
@@ -1353,7 +1354,7 @@ app.post('/pedidos/publico', async (req, res) => {
 
         const idPedido = result.insertId;
 
-        // 3. Insere os Itens
+        // 3. Insere os Itens - PROTEÇÃO CONTRA ERRO DE COLUNA
         if (p.itens && p.itens.length > 0) {
             const valoresItens = p.itens.map(i => [
                 idPedido, 
@@ -1361,9 +1362,10 @@ app.post('/pedidos/publico', async (req, res) => {
                 i.qtd, 
                 i.vl_unitario, 
                 i.vl_total, 
-                i.observacao || null
+                i.observacao || ''
             ]);
 
+            // Se der erro aqui, o catch vai pegar e te avisar se falta coluna na pedido_item
             await new Promise((r, j) =>
                 db.query(`INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`, 
                 [valoresItens], err => err ? j(err) : r())
@@ -1373,8 +1375,9 @@ app.post('/pedidos/publico', async (req, res) => {
         res.status(201).json({ id_pedido: idPedido, message: "Pedido enviado!" });
 
     } catch (e) {
-        console.error("Erro detalhado no servidor:", e); 
-        res.status(500).json({ error: "Erro interno", details: e.message });
+        // ESTA LINHA É A MAIS IMPORTANTE: Ela vai cuspir o erro real no log do Render
+        console.error("ERRO CRÍTICO NO BANCO:", e.sqlMessage || e.message); 
+        res.status(500).json({ error: "Erro interno", details: e.sqlMessage || e.message });
     }
 });
 
