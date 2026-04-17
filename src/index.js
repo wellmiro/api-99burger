@@ -1334,7 +1334,7 @@ app.post('/pedidos/publico', async (req, res) => {
         const result = await new Promise((r, j) =>
             db.query(sqlPedido, [
                 estab.id_estabelecimento,
-                p.id_usuario || null,
+                p.id_usuario ?? 0, // <--- O SEGREDO ESTÁ AQUI. Se vier vazio, vira 0. Se vier 0, continua 0!
                 p.nome_cliente || 'Cliente Web',
                 dtPedido,
                 p.vl_subtotal || 0,
@@ -1353,11 +1353,8 @@ app.post('/pedidos/publico', async (req, res) => {
 
         const idPedido = result.insertId;
 
-        // 3. Insere os Itens (ADICIONADO id_estabelecimento SE A TABELA PEDIDO_ITEM TIVER ESSA COLUNA)
+        // 3. Insere os Itens
         if (p.itens && p.itens.length > 0) {
-            // Verifique se sua tabela pedido_item tem id_estabelecimento. 
-            // Se tiver, use a lógica comentada abaixo. Se não tiver, use a lógica simples.
-            
             const valoresItens = p.itens.map(i => [
                 idPedido, 
                 i.id_produto, 
@@ -1365,7 +1362,6 @@ app.post('/pedidos/publico', async (req, res) => {
                 i.vl_unitario, 
                 i.vl_total, 
                 i.observacao || null
-                // estab.id_estabelecimento // <-- Adicione aqui se o banco der erro de falta de coluna
             ]);
 
             await new Promise((r, j) =>
@@ -1377,7 +1373,7 @@ app.post('/pedidos/publico', async (req, res) => {
         res.status(201).json({ id_pedido: idPedido, message: "Pedido enviado!" });
 
     } catch (e) {
-        console.error("Erro detalhado no servidor:", e); // Isso vai aparecer no LOG do Render
+        console.error("Erro detalhado no servidor:", e); 
         res.status(500).json({ error: "Erro interno", details: e.message });
     }
 });
