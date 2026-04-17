@@ -1314,18 +1314,17 @@ app.post('/pedidos/publico', async (req, res) => {
     const p = req.body;
 
     try {
-        // 1. Busca o ID do estabelecimento pelo SLUG para segurança
+        // 1. Busca o ID do estabelecimento
         const estab = await new Promise((r, j) =>
             db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [p.slug], 
-            (err, res) => err ? j(err) : r(res[0]))
+            (err, result) => err ? j(err) : r(result[0]))
         );
 
         if (!estab) return res.status(404).json({ error: "Estabelecimento não encontrado." });
 
-        // 2. Data atual formatada (Brasília)
         const dtPedido = new Date().toLocaleString("sv-SE", { timeZone: "America/Sao_Paulo" }).replace('T', ' ');
 
-        // 3. Insere o Pedido com todas as suas colunas (incluindo 'rota')
+        // 2. Insere o Pedido
         const sqlPedido = `
             INSERT INTO pedido 
             (id_estabelecimento, id_usuario, nome_cliente, dt_pedido, vl_subtotal, vl_entrega, vl_total, 
@@ -1341,11 +1340,11 @@ app.post('/pedidos/publico', async (req, res) => {
                 p.vl_subtotal || 0,
                 p.vl_entrega || 0,
                 p.vl_total || 0,
-                'A', // Status Aberto
+                'A', 
                 p.forma_pagamento || 'PIX',
                 p.observacao || null,
                 p.endereco_entrega || null,
-                p.rota || null, // <--- AQUI VAI O LINK DO MAPS VINDO DO BODY
+                p.rota || null,
                 p.dinheiro || 0,
                 p.troco || 0,
                 p.local_consumo || 'DELIVERY'
@@ -1354,11 +1353,21 @@ app.post('/pedidos/publico', async (req, res) => {
 
         const idPedido = result.insertId;
 
-        // 4. Insere os Itens na tabela pedido_item
+        // 3. Insere os Itens (ADICIONADO id_estabelecimento SE A TABELA PEDIDO_ITEM TIVER ESSA COLUNA)
         if (p.itens && p.itens.length > 0) {
+            // Verifique se sua tabela pedido_item tem id_estabelecimento. 
+            // Se tiver, use a lógica comentada abaixo. Se não tiver, use a lógica simples.
+            
             const valoresItens = p.itens.map(i => [
-                idPedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null
+                idPedido, 
+                i.id_produto, 
+                i.qtd, 
+                i.vl_unitario, 
+                i.vl_total, 
+                i.observacao || null
+                // estab.id_estabelecimento // <-- Adicione aqui se o banco der erro de falta de coluna
             ]);
+
             await new Promise((r, j) =>
                 db.query(`INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`, 
                 [valoresItens], err => err ? j(err) : r())
@@ -1368,8 +1377,8 @@ app.post('/pedidos/publico', async (req, res) => {
         res.status(201).json({ id_pedido: idPedido, message: "Pedido enviado!" });
 
     } catch (e) {
-        console.error("Erro ao salvar pedido:", e);
-        res.status(500).json({ error: "Erro interno" });
+        console.error("Erro detalhado no servidor:", e); // Isso vai aparecer no LOG do Render
+        res.status(500).json({ error: "Erro interno", details: e.message });
     }
 });
 
