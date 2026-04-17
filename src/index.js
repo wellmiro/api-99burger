@@ -1312,29 +1312,31 @@ app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
 
 app.post('/pedidos/publico', (req, res) => {
     const p = req.body;
-    
-    // 1. Grava o pedido primeiro (valores fixos para o que for obrigatório)
-    const sql = `INSERT INTO pedido (id_estabelecimento, id_usuario, nome_cliente, dt_pedido, vl_subtotal, vl_entrega, vl_total, status, forma_pagamento, endereco_entrega) 
-                 VALUES (5, 0, ?, NOW(), ?, ?, ?, 'A', 'A combinar', ?)`;
 
-    db.query(sql, [p.nome_cliente, p.vl_subtotal, p.vl_entrega, p.vl_total, p.endereco_entrega], (err, result) => {
-        if (err) {
-            console.log("ERRO NO PEDIDO:", err.message);
-            return res.status(500).send(err.message);
-        }
+    // 1. Insere o Pedido
+    const sqlPedido = `INSERT INTO pedido (id_estabelecimento, id_usuario, nome_cliente, dt_pedido, vl_subtotal, vl_entrega, vl_total, status, forma_pagamento) 
+                       VALUES (5, 0, ?, NOW(), ?, ?, ?, 'A', 'A combinar')`;
+
+    db.query(sqlPedido, [p.nome_cliente, p.vl_subtotal, p.vl_entrega, p.vl_total], (err, result) => {
+        if (err) return res.status(500).json({ erro_no_pedido: err.message });
 
         const id_pedido = result.insertId;
 
-        // 2. Grava os itens logo em seguida
-        const itens = p.itens.map(i => [id_pedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total]);
-        
-        db.query("INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total) VALUES ?", [itens], (err) => {
-            if (err) {
-                console.log("ERRO NOS ITENS:", err.message);
-                return res.status(500).send(err.message);
-            }
+        // 2. Se não tiver itens, para aqui
+        if (!p.itens || p.itens.length === 0) return res.status(201).send("Pedido sem itens ok");
 
-            res.status(201).send("Pedido gravado com sucesso!");
+        // 3. Insere os Itens - VEJA SE AS COLUNAS ESTÃO CERTAS
+        // Tentei deixar apenas o básico que toda tabela 'pedido_item' tem
+        const valoresItens = p.itens.map(i => [id_pedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total]);
+        
+        const sqlItens = "INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total) VALUES ?";
+
+        db.query(sqlItens, [valoresItens], (errItens) => {
+            if (errItens) {
+                // Se der erro aqui, você vai ler EXATAMENTE o que é no console do Chrome
+                return res.status(500).json({ erro_nos_itens: errItens.message, detalhes: errItens });
+            }
+            res.status(201).json({ mensagem: "Sucesso!", id: id_pedido });
         });
     });
 });
