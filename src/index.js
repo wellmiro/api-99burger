@@ -591,6 +591,32 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
       });
 });
 
+app.get('/pedidos/historico/:slug', (req, res) => {
+    const slug = req.params.slug;
+
+    const ssql = `
+        SELECT 
+            p.id_pedido,
+            p.nome_cliente,
+            p.status,
+            DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_pedido,
+            p.vl_total,
+            p.forma_pagamento
+        FROM pedido p
+        JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+        WHERE e.slug = ? 
+        ORDER BY p.id_pedido DESC
+    `;
+
+    db.query(ssql, [slug], (err, result) => {
+        if (err) {
+            console.error('Erro ao buscar lista:', err);
+            return res.status(500).json({ error: 'Erro interno' });
+        }
+        res.status(200).json(result);
+    });
+});
+
 app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
     const idPedido = parseInt(req.params.id_pedido, 10);
  
