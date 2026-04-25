@@ -591,10 +591,8 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
       });
 });
 
-app.get('/pedidos/historico/:slug', (req, res) => {
-    const slug = req.params.slug;
-
-    console.log("SLUG RECEBIDO:", slug); // 👈 IMPORTANTE
+app.get('/pedidos/historico/:slug/:session_id', (req, res) => {
+    const { slug, session_id } = req.params;
 
     const ssql = `
         SELECT 
@@ -606,16 +604,13 @@ app.get('/pedidos/historico/:slug', (req, res) => {
             p.forma_pagamento
         FROM pedido p
         JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
-        WHERE e.slug = ? 
+        WHERE e.slug = ? AND p.session_id = ?
         ORDER BY p.id_pedido DESC
     `;
 
-    db.query(ssql, [slug], (err, result) => {
-        if (err) {
-            console.error('Erro ao buscar lista:', err);
-            return res.status(500).json({ error: 'Erro interno' });
-        }
-        res.status(200).json(result);
+    db.query(ssql, [slug, session_id], (err, result) => {
+        if (err) return res.status(500).json(err);
+        res.json(result);
     });
 });
 
