@@ -618,65 +618,31 @@ app.get('/pedidos/historico/:slug', (req, res) => {
 });
 
 app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
-    const idPedido = parseInt(req.params.id_pedido, 10);
- 
-    if (!idPedido || isNaN(idPedido)) {
-        return res.status(400).json({ error: 'ID do pedido inválido' });
-    }
- 
+    const idPedido = req.params.id_pedido;
+
     const ssql = `
         SELECT 
-            p.id_pedido,
-            p.nome_cliente,
-            p.status,
-            DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_pedido,
-            p.vl_subtotal,
-            p.vl_entrega,
-            p.vl_total,
-            p.endereco_entrega,
-            p.forma_pagamento,
-            p.local_consumo
+            p.id_pedido, p.nome_cliente, p.status, p.vl_total,
+            p.endereco_entrega, p.forma_pagamento,
+            DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_pedido
         FROM pedido p
         WHERE p.id_pedido = ?
     `;
- 
+
     db.query(ssql, [idPedido], (err, result) => {
-        if (err) {
-            console.error('Erro ao buscar pedido:', err);
-            return res.status(500).json({ error: 'Erro interno do servidor' });
-        }
- 
-        if (result.length === 0) {
-            return res.status(404).json({ error: 'Pedido não encontrado' });
-        }
- 
+        if (err || result.length === 0) return res.status(404).json({ error: 'Pedido não encontrado' });
+
         const pedido = result[0];
- 
-        // Busca os itens do pedido
+
         const ssqlItens = `
-            SELECT 
-                i.id_item,
-                pr.nome AS nome_produto,
-                pr.url_foto,
-                i.qtd,
-                i.vl_unitario,
-                i.vl_total,
-                i.observacao
+            SELECT i.qtd, pr.nome AS nome_produto, i.vl_total
             FROM pedido_item i
             JOIN produto pr ON pr.id_produto = i.id_produto
             WHERE i.id_pedido = ?
         `;
- 
+
         db.query(ssqlItens, [idPedido], (err2, itens) => {
-            if (err2) {
-                console.error('Erro ao buscar itens:', err2);
-                return res.status(500).json({ error: 'Erro ao buscar itens do pedido' });
-            }
- 
-            return res.status(200).json({
-                ...pedido,
-                itens: itens
-            });
+            res.status(200).json({ ...pedido, itens });
         });
     });
 });
