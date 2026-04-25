@@ -594,6 +594,8 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
 app.get('/pedidos/historico/:slug', (req, res) => {
     const slug = req.params.slug;
 
+    console.log("SLUG RECEBIDO:", slug); // 👈 IMPORTANTE
+
     const ssql = `
         SELECT 
             p.id_pedido,
