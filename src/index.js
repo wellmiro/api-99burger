@@ -1379,7 +1379,7 @@ app.post('/pedidos/publico', async (req, res) => {
     }
 
     try {
-        // 1. Busca o id_estabelecimento pelo slug (igual o endpoint do cardápio digital faz)
+        // 1. Busca o id_estabelecimento pelo slug
         const estabelecimento = await new Promise((resolve, reject) => {
             db.query(
                 'SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?',
@@ -1394,35 +1394,39 @@ app.post('/pedidos/publico', async (req, res) => {
 
         const id_estabelecimento = estabelecimento.id_estabelecimento;
 
-        // 2. Calcula data/hora de Brasília (UTC-3), mesmo padrão do endpoint /pedidos
+        // 2. Data/hora
         const agora = new Date();
         agora.setHours(agora.getHours() - 3);
         const dtPedidoBrasilia = agora.toISOString().slice(0, 19).replace('T', ' ');
 
-        // 3. Insere o pedido com TODAS as colunas necessárias
+        // 🔥 NOVO: session_id vindo do frontend
+        const session_id = p.session_id || null;
+
+        // 3. INSERT (🔥 SÓ ADICIONEI session_id)
         const result = await new Promise((resolve, reject) => {
             db.query(
                 `INSERT INTO pedido 
                 (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, 
                  forma_pagamento, vl_total, status, dt_pedido, endereco_entrega, 
-                 rota, observacao, local_consumo, dinheiro, troco)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 rota, observacao, local_consumo, dinheiro, troco, session_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
-                    null,                           // id_usuario: NULL (pedido público, sem login)
-                    id_estabelecimento,             // vem do slug
+                    null,
+                    id_estabelecimento,
                     p.nome_cliente,
                     p.vl_subtotal || 0,
                     p.vl_entrega || 0,
                     p.forma_pagamento || 'A combinar',
                     p.vl_total || 0,
-                    'A',                            // status: Aberto
+                    'A',
                     dtPedidoBrasilia,
                     p.endereco_entrega || null,
-                    p.rota || null,                 // link do Google Maps
+                    p.rota || null,
                     p.observacao || null,
                     p.local_consumo || 'DELIVERY',
                     p.dinheiro || 0,
-                    p.troco || 0
+                    p.troco || 0,
+                    session_id // 🔥 AQUI
                 ],
                 (err, res) => err ? reject(err) : resolve(res)
             );
@@ -1430,7 +1434,7 @@ app.post('/pedidos/publico', async (req, res) => {
 
         const idPedido = result.insertId;
 
-        // 4. Insere os itens (com observacao)
+        // 4. Itens
         if (p.itens && p.itens.length > 0) {
             const itens = p.itens.map(i => [
                 idPedido,
@@ -1450,7 +1454,6 @@ app.post('/pedidos/publico', async (req, res) => {
             });
         }
 
-        // 5. Sucesso!
         res.status(201).json({
             id_pedido: idPedido,
             message: 'Pedido realizado com sucesso!'
