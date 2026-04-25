@@ -1310,35 +1310,100 @@ app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
     }
 });
 
-app.post('/pedidos/publico', (req, res) => {
+app.post('/pedidos/publico', async (req, res) => {
     const p = req.body;
 
-    // 1. Insere o Pedido
-    const sqlPedido = `INSERT INTO pedido (id_estabelecimento, id_usuario, nome_cliente, dt_pedido, vl_subtotal, vl_entrega, vl_total, status, forma_pagamento) 
-                       VALUES (5, 0, ?, NOW(), ?, ?, ?, 'A', 'A combinar')`;
+    // Validação básica
+    if (!p.slug) {
+        return res.status(400).json({ error: 'Slug do estabelecimento é obrigatório' });
+    }
 
-    db.query(sqlPedido, [p.nome_cliente, p.vl_subtotal, p.vl_entrega, p.vl_total], (err, result) => {
-        if (err) return res.status(500).json({ erro_no_pedido: err.message });
+    if (!p.nome_cliente || !p.itens || p.itens.length === 0) {
+        return res.status(400).json({ error: 'Nome do cliente e itens são obrigatórios' });
+    }
 
-        const id_pedido = result.insertId;
-
-        // 2. Se não tiver itens, para aqui
-        if (!p.itens || p.itens.length === 0) return res.status(201).send("Pedido sem itens ok");
-
-        // 3. Insere os Itens - VEJA SE AS COLUNAS ESTÃO CERTAS
-        // Tentei deixar apenas o básico que toda tabela 'pedido_item' tem
-        const valoresItens = p.itens.map(i => [id_pedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total]);
-        
-        const sqlItens = "INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total) VALUES ?";
-
-        db.query(sqlItens, [valoresItens], (errItens) => {
-            if (errItens) {
-                // Se der erro aqui, você vai ler EXATAMENTE o que é no console do Chrome
-                return res.status(500).json({ erro_nos_itens: errItens.message, detalhes: errItens });
-            }
-            res.status(201).json({ mensagem: "Sucesso!", id: id_pedido });
+    try {
+        // 1. Busca o id_estabelecimento pelo slug (igual o endpoint do cardápio digital faz)
+        const estabelecimento = await new Promise((resolve, reject) => {
+            db.query(
+                'SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?',
+                [p.slug],
+                (err, result) => {
+                    if (err) return reject(err);
+                    if (result.length === 0) return reject(new Error('Estabelecimento não encontrado para o slug: ' + p.slug));
+                    resolve(result[0]);
+                }
+            );
         });
-    });
+
+        const id_estabelecimento = estabelecimento.id_estabelecimento;
+
+        // 2. Calcula data/hora de Brasília (UTC-3), mesmo padrão do endpoint /pedidos
+        const agora = new Date();
+        agora.setHours(agora.getHours() - 3);
+        const dtPedidoBrasilia = agora.toISOString().slice(0, 19).replace('T', ' ');
+
+        // 3. Insere o pedido com TODAS as colunas necessárias
+        const result = await new Promise((resolve, reject) => {
+            db.query(
+                `INSERT INTO pedido 
+                (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, 
+                 forma_pagamento, vl_total, status, dt_pedido, endereco_entrega, 
+                 rota, observacao, local_consumo, dinheiro, troco)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                [
+                    null,                           // id_usuario: NULL (pedido público, sem login)
+                    id_estabelecimento,             // vem do slug
+                    p.nome_cliente,
+                    p.vl_subtotal || 0,
+                    p.vl_entrega || 0,
+                    p.forma_pagamento || 'A combinar',
+                    p.vl_total || 0,
+                    'A',                            // status: Aberto
+                    dtPedidoBrasilia,
+                    p.endereco_entrega || null,
+                    p.rota || null,                 // link do Google Maps
+                    p.observacao || null,
+                    p.local_consumo || 'DELIVERY',
+                    p.dinheiro || 0,
+                    p.troco || 0
+                ],
+                (err, res) => err ? reject(err) : resolve(res)
+            );
+        });
+
+        const idPedido = result.insertId;
+
+        // 4. Insere os itens (com observacao)
+        if (p.itens && p.itens.length > 0) {
+            const itens = p.itens.map(i => [
+                idPedido,
+                i.id_produto,
+                i.qtd,
+                i.vl_unitario,
+                i.vl_total,
+                i.observacao || null
+            ]);
+
+            await new Promise((resolve, reject) => {
+                db.query(
+                    'INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?',
+                    [itens],
+                    (err) => err ? reject(err) : resolve()
+                );
+            });
+        }
+
+        // 5. Sucesso!
+        res.status(201).json({
+            id_pedido: idPedido,
+            message: 'Pedido realizado com sucesso!'
+        });
+
+    } catch (e) {
+        console.error('Erro no /pedidos/publico:', e);
+        res.status(500).json({ error: e.message });
+    }
 });
 
 
