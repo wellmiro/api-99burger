@@ -558,6 +558,8 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
 
 
  app.get("/pedidos/resumo", token.ValidateJWT, function (request, response) {
+      const id_estabelecimento = request.id_estabelecimento;
+
       let ssql = `
           SELECT 
               p.id_pedido,
@@ -569,24 +571,25 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
               p.vl_entrega,
               p.dinheiro,
               p.troco,
-              p.local_consumo, -- <--- NOVO CAMPO ADICIONADO
+              p.local_consumo,
               p.endereco_entrega,
               u.nome AS nome_login,
               p.rota,
               p.vl_total
           FROM pedido p
-          JOIN usuario u ON u.id_usuario = p.id_usuario
+          LEFT JOIN usuario u ON u.id_usuario = p.id_usuario
+          WHERE p.id_estabelecimento = ?
           ORDER BY p.dt_pedido
       `;
 
-      db.query(ssql, function (err, result) {
+      db.query(ssql, [id_estabelecimento], function (err, result) {
           if (err) {
               return response.status(500).send(err);
           } else {
               return response.status(200).json(result);
           }
       });
-  });
+});
 
   app.put('/usuarios/:id', token.ValidateJWT, (req, res) => {
     const { nome, email, tipo, senha } = req.body;
