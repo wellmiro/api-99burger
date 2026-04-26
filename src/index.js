@@ -1517,11 +1517,10 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
   });
 });
 
-// Endpoint para o Cardápio Digital (Aberto ao público via SLUG)
-// ATUALIZE ESTE ENDPOINT NO SEU INDEX.JS
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
 
+    // O segredo está no WHERE e nos JOINs abaixo:
     let ssql = `
         SELECT 
             p.id_produto,
@@ -1534,8 +1533,8 @@ app.get("/cardapio_digital/:id", function (request, response) {
             e.nome as nome_estabelecimento,
             e.logo as url_logo
         FROM produto p
-        JOIN produto_categoria c ON c.id_categoria = p.id_categoria
-        JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+        INNER JOIN produto_categoria c ON c.id_categoria = p.id_categoria
+        INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
         WHERE e.slug = ? 
         ORDER BY c.ordem, p.nome
     `;
@@ -1543,7 +1542,7 @@ app.get("/cardapio_digital/:id", function (request, response) {
     db.query(ssql, [slug], function (err, result) {
         if (err) {
             console.error("Erro SQL:", err);
-            return response.status(500).json({ error: "Erro interno" });
+            return response.status(500).json({ error: "Erro interno no servidor" });
         }
 
         if (result.length === 0) {
