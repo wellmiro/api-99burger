@@ -1520,10 +1520,8 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
 // Endpoint para o Cardápio Digital (Aberto ao público via SLUG)
 app.get("/cardapio_digital/:id", function (request, response) {
     
-    // O :id aqui agora será o SLUG (ex: cardapio-kadds-burguers)
     const slug = request.params.id;
 
-    // SQL corrigido com filtros de segurança
     let ssql = `
         SELECT 
             p.id_produto,
@@ -1539,31 +1537,24 @@ app.get("/cardapio_digital/:id", function (request, response) {
         JOIN produto_categoria c ON c.id_categoria = p.id_categoria
         JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
         WHERE e.slug = ? 
-        AND p.situacao = 'A' 
-        AND p.cardapio_digital = 'S'
         ORDER BY c.ordem, p.nome
     `;
 
-    // NOTA: Adicionei "p.situacao = 'A'" para pegar só ativos 
-    // e "p.cardapio_digital = 'S'" para pegar só o que você marcou para o site.
-    // Verifique se os nomes dessas colunas no seu banco são exatamente esses.
-
     db.query(ssql, [slug], function (err, result) {
         if (err) {
-            console.error("Erro ao buscar cardápio:", err);
-            return response.status(500).json({ error: "Erro ao buscar cardápio" });
+            console.error("Erro SQL:", err);
+            return response.status(500).json({ error: "Erro interno no banco de dados" });
         }
 
         if (result.length === 0) {
-            return response.status(404).json({ error: "Cardápio não encontrado ou vazio" });
+            return response.status(404).json({ error: "Cardápio não encontrado" });
         }
 
-        // Formatação dos dados para o React
         const produtos = result.map(p => ({
             id_produto: p.id_produto,
             nome: p.nome,
             descricao: p.descricao,
-            url_foto: p.url_foto, // Aqui o front já vai receber a URL correta
+            url_foto: p.url_foto,
             preco: parseFloat(p.preco),
             categoria: p.categoria,
             id_categoria: p.id_categoria,
