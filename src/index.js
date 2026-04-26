@@ -1518,14 +1518,39 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
 });
 
 // 1. Endpoint de PRODUTOS
+// Endpoint de CATEGORIAS
+app.get("/categorias_digital/:id", function (request, response) {
+    const slug = request.params.id;
+
+    // 1. Primeiro pegamos o ID do estabelecimento pelo Slug
+    db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
+        if (err || estab.length === 0) {
+            return response.status(404).json({ error: "Estabelecimento não encontrado" });
+        }
+
+        const id_estab = estab[0].id_estabelecimento;
+
+        // 2. Agora pegamos as categorias desse ID específico
+        let ssql = `
+            SELECT id_categoria, descricao as categoria, url_icone, ordem 
+            FROM produto_categoria 
+            WHERE id_estabelecimento = ?
+            ORDER BY ordem
+        `;
+
+        db.query(ssql, [id_estab], function (err, result) {
+            if (err) return response.status(500).json({ error: err.message });
+            return response.status(200).json(result);
+        });
+    });
+});
+
+// Endpoint de PRODUTOS
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
 
-    // Primeiro descobrimos quem é o dono do slug
-    let sqlEstab = "SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?";
-    
-    db.query(sqlEstab, [slug], function (err, estab) {
-        if (err || estab.length === 0) return response.status(404).json({ error: "Estabelecimento não encontrado" });
+    db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
+        if (err || estab.length === 0) return response.status(404).json({ error: "Não encontrado" });
 
         const id_estab = estab[0].id_estabelecimento;
 
@@ -1546,31 +1571,6 @@ app.get("/cardapio_digital/:id", function (request, response) {
             }));
 
             return response.status(200).json(produtos);
-        });
-    });
-});
-
-// 2. Endpoint de CATEGORIAS
-app.get("/categorias_digital/:id", function (request, response) {
-    const slug = request.params.id;
-
-    let sqlEstab = "SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?";
-    
-    db.query(sqlEstab, [slug], function (err, estab) {
-        if (err || estab.length === 0) return response.status(404).json({ error: "Categorias não encontradas" });
-
-        const id_estab = estab[0].id_estabelecimento;
-
-        let ssql = `
-            SELECT id_categoria, descricao as categoria, url_icone, ordem 
-            FROM produto_categoria 
-            WHERE id_estabelecimento = ?
-            ORDER BY ordem
-        `;
-
-        db.query(ssql, [id_estab], function (err, result) {
-            if (err) return response.status(500).json({ error: err.message });
-            return response.status(200).json(result);
         });
     });
 });
