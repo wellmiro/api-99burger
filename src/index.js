@@ -1546,9 +1546,38 @@ app.get("/categorias_digital/:id", function (request, response) {
 });
 
 // Endpoint de PRODUTOS
+// ESSE FICA IGUAL AO ORIGINAL — não muda nada
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
 
+    db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
+        if (err || estab.length === 0) return response.status(404).json({ error: "Não encontrado" });
+
+        const id_estab = estab[0].id_estabelecimento;
+
+        let ssql = `
+            SELECT p.*, c.descricao AS categoria 
+            FROM produto p
+            INNER JOIN produto_categoria c ON c.id_categoria = p.id_categoria
+            WHERE p.id_estabelecimento = ?
+            ORDER BY c.ordem, p.nome
+        `;
+
+        db.query(ssql, [id_estab], function (err, result) {
+            if (err) return response.status(500).json({ error: err.message });
+            
+            const produtos = result.map(p => ({
+                ...p,
+                preco: parseFloat(p.preco)
+            }));
+
+            return response.status(200).json(produtos);
+        });
+    });
+});
+
+// ESSE É NOVO — endpoint separado para as opções
+app.get("/opcoes_digital/:id_produto", function (req, res) {
     const id_produto = req.params.id_produto;
 
     const ssql = `
@@ -1571,7 +1600,6 @@ app.get("/cardapio_digital/:id", function (request, response) {
     db.query(ssql, [id_produto], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         
-        // Agrupa os itens dentro de cada opção
         const grupos = [];
         rows.forEach(row => {
             let grupo = grupos.find(g => g.id_opcao === row.id_opcao);
