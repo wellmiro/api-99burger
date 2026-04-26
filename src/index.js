@@ -1577,7 +1577,9 @@ app.get("/cardapio_digital/:id", function (request, response) {
 });
 
 // ESSE É NOVO — endpoint separado para as opções
+// ESSE É NOVO — endpoint separado para as opções
 app.get("/opcoes_digital/:id_produto", function (req, res) {
+    const id_produto = req.params.id_produto; // ← essa linha estava faltando
 
     const ssql = `
         SELECT 
