@@ -1518,10 +1518,14 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
 });
 
 // Endpoint para o Cardápio Digital (Aberto ao público via SLUG)
+// ATUALIZE ESTE ENDPOINT NO SEU INDEX.JS
 app.get("/cardapio_digital/:id", function (request, response) {
     
+    // O :id é o SLUG (ex: 99burger)
     const slug = request.params.id;
 
+    // Esta query é a "chave" de tudo. 
+    // Ela filtra os produtos pelo estabelecimento correto através do SLUG.
     let ssql = `
         SELECT 
             p.id_produto,
@@ -1543,13 +1547,14 @@ app.get("/cardapio_digital/:id", function (request, response) {
     db.query(ssql, [slug], function (err, result) {
         if (err) {
             console.error("Erro SQL:", err);
-            return response.status(500).json({ error: "Erro interno no banco de dados" });
+            return response.status(500).json({ error: "Erro interno no servidor" });
         }
 
         if (result.length === 0) {
             return response.status(404).json({ error: "Cardápio não encontrado" });
         }
 
+        // Formatação para garantir que o preco seja número e não string
         const produtos = result.map(p => ({
             id_produto: p.id_produto,
             nome: p.nome,
