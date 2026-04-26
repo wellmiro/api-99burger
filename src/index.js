@@ -1517,21 +1517,14 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
   });
 });
 
+// 1. Endpoint de PRODUTOS (Cardápio Digital)
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
 
-    // O segredo está no WHERE e nos JOINs abaixo:
     let ssql = `
         SELECT 
-            p.id_produto,
-            p.nome,
-            p.descricao,
-            p.url_foto,
-            p.preco,
-            c.descricao AS categoria,
-            c.id_categoria,
-            e.nome as nome_estabelecimento,
-            e.logo as url_logo
+            p.id_produto, p.nome, p.descricao, p.url_foto, p.preco,
+            c.descricao AS categoria, c.id_categoria
         FROM produto p
         INNER JOIN produto_categoria c ON c.id_categoria = p.id_categoria
         INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
@@ -1540,15 +1533,8 @@ app.get("/cardapio_digital/:id", function (request, response) {
     `;
 
     db.query(ssql, [slug], function (err, result) {
-        if (err) {
-            console.error("Erro SQL:", err);
-            return response.status(500).json({ error: "Erro interno no servidor" });
-        }
-
-        if (result.length === 0) {
-            return response.status(404).json({ error: "Cardápio não encontrado" });
-        }
-
+        if (err) return response.status(500).json({ error: err.message });
+        
         const produtos = result.map(p => ({
             ...p,
             preco: parseFloat(p.preco)
@@ -1556,6 +1542,29 @@ app.get("/cardapio_digital/:id", function (request, response) {
 
         return response.status(200).json(produtos);
     }); 
+});
+
+// 2. NOVO Endpoint de CATEGORIAS (Cardápio Digital)
+app.get("/categorias_digital/:id", function (request, response) {
+    const slug = request.params.id;
+
+    let ssql = `
+        SELECT DISTINCT
+            c.id_categoria,
+            c.descricao AS categoria,
+            c.url_foto,
+            c.ordem
+        FROM produto_categoria c
+        INNER JOIN produto p ON p.id_categoria = c.id_categoria
+        INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+        WHERE e.slug = ?
+        ORDER BY c.ordem
+    `;
+
+    db.query(ssql, [slug], function (err, result) {
+        if (err) return response.status(500).json({ error: err.message });
+        return response.status(200).json(result);
+    });
 });
 
 // Listar categorias de despesa
