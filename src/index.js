@@ -1549,29 +1549,53 @@ app.get("/categorias_digital/:id", function (request, response) {
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
 
-    db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
-        if (err || estab.length === 0) return response.status(404).json({ error: "Não encontrado" });
+    const id_produto = req.params.id_produto;
 
-        const id_estab = estab[0].id_estabelecimento;
+    const ssql = `
+        SELECT 
+            o.id_opcao,
+            o.descricao,
+            o.ind_obrigatorio,
+            o.qtd_max_escolha,
+            o.ordem AS ordem_grupo,
+            i.id_item,
+            i.nome_item,
+            i.vl_item,
+            i.ordem AS ordem_item
+        FROM produto_opcao o
+        LEFT JOIN produto_opcao_item i ON i.id_opcao = o.id_opcao
+        WHERE o.id_produto = ? AND o.ind_ativo = 'S'
+        ORDER BY o.ordem, i.ordem
+    `;
 
-        let ssql = `
-            SELECT p.*, c.descricao AS categoria 
-            FROM produto p
-            INNER JOIN produto_categoria c ON c.id_categoria = p.id_categoria
-            WHERE p.id_estabelecimento = ?
-            ORDER BY c.ordem, p.nome
-        `;
-
-        db.query(ssql, [id_estab], function (err, result) {
-            if (err) return response.status(500).json({ error: err.message });
-            
-            const produtos = result.map(p => ({
-                ...p,
-                preco: parseFloat(p.preco)
-            }));
-
-            return response.status(200).json(produtos);
+    db.query(ssql, [id_produto], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        
+        // Agrupa os itens dentro de cada opção
+        const grupos = [];
+        rows.forEach(row => {
+            let grupo = grupos.find(g => g.id_opcao === row.id_opcao);
+            if (!grupo) {
+                grupo = {
+                    id_opcao: row.id_opcao,
+                    descricao: row.descricao,
+                    ind_obrigatorio: row.ind_obrigatorio,
+                    qtd_max_escolha: row.qtd_max_escolha,
+                    itens: []
+                };
+                grupos.push(grupo);
+            }
+            if (row.id_item) {
+                grupo.itens.push({
+                    id_item: row.id_item,
+                    nome_item: row.nome_item,
+                    vl_item: parseFloat(row.vl_item),
+                    ordem: row.ordem_item
+                });
+            }
         });
+
+        return res.status(200).json(grupos);
     });
 });
 
