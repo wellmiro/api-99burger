@@ -1555,11 +1555,13 @@ app.get("/cardapio_digital/:id", function (request, response) {
 
         const id_estab = estab[0].id_estabelecimento;
 
+        // Adicionado GROUP BY para evitar que o JOIN duplique os produtos na lista
         let ssql = `
             SELECT p.*, c.descricao AS categoria 
             FROM produto p
             INNER JOIN produto_categoria c ON c.id_categoria = p.id_categoria
             WHERE p.id_estabelecimento = ?
+            GROUP BY p.id_produto
             ORDER BY c.ordem, p.nome
         `;
 
