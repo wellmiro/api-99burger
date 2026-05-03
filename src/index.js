@@ -1517,42 +1517,11 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
   });
 });
 
-// 1. Endpoint de PRODUTOS
-// Endpoint de CATEGORIAS
-app.get("/categorias_digital/:id", function (request, response) {
-    const slug = request.params.id;
-
-    // 1. Primeiro pegamos o ID do estabelecimento pelo Slug
-    db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
-        if (err || estab.length === 0) {
-            return response.status(404).json({ error: "Estabelecimento não encontrado" });
-        }
-
-        const id_estab = estab[0].id_estabelecimento;
-
-        // 2. Agora pegamos as categorias desse ID específico
-        let ssql = `
-            SELECT id_categoria, descricao as categoria, url_icone, ordem 
-            FROM produto_categoria 
-            WHERE id_estabelecimento = ?
-            ORDER BY ordem
-        `;
-
-        db.query(ssql, [id_estab], function (err, result) {
-            if (err) return response.status(500).json({ error: err.message });
-            return response.status(200).json(result);
-        });
-    });
-});
-
-// Endpoint de PRODUTOS
-// ESSE FICA IGUAL AO ORIGINAL — não muda nada
+// ENDPOINT 1: Vitrine de Produtos (O que você já mexeu)
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
-
     db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
         if (err || estab.length === 0) return response.status(404).json({ error: "Não encontrado" });
-
         const id_estab = estab[0].id_estabelecimento;
 
         let ssql = `
@@ -1564,16 +1533,33 @@ app.get("/cardapio_digital/:id", function (request, response) {
             GROUP BY p.id_produto
             ORDER BY c.ordem, p.nome
         `;
-
         db.query(ssql, [id_estab], function (err, result) {
             if (err) return response.status(500).json({ error: err.message });
-            
-            const produtos = result.map(p => ({
-                ...p,
-                preco: parseFloat(p.preco)
-            }));
-
+            const produtos = result.map(p => ({ ...p, preco: parseFloat(p.preco) }));
             return response.status(200).json(produtos);
+        });
+    });
+});
+
+// ENDPOINT 2: Barra de Categorias (O QUE ESTAVA FALTANDO!)
+app.get("/categorias_digital/:id", function (request, response) {
+    const slug = request.params.id;
+    db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
+        if (err || estab.length === 0) return response.status(404).json({ error: "Não encontrado" });
+        const id_estab = estab[0].id_estabelecimento;
+
+        // Aqui filtramos as categorias inativas também para a barra de ícones
+        // E usamos 'AS categoria' para o clique do React funcionar
+        let ssql = `
+            SELECT id_categoria, descricao AS categoria, url_icone 
+            FROM produto_categoria 
+            WHERE id_estabelecimento = ? 
+              AND (ativo IS NULL OR ativo != 'N')
+            ORDER BY ordem
+        `;
+        db.query(ssql, [id_estab], function (err, result) {
+            if (err) return response.status(500).json({ error: err.message });
+            return response.status(200).json(result);
         });
     });
 });
