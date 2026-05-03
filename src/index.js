@@ -619,7 +619,8 @@ app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
 
     const ssql = `
         SELECT 
-            p.id_pedido, p.nome_cliente, p.status, p.vl_total,
+            p.id_pedido, p.nome_cliente, p.status,
+            p.vl_subtotal, p.vl_entrega, p.vl_total,
             p.endereco_entrega, p.forma_pagamento,
             DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_pedido
         FROM pedido p
