@@ -1517,11 +1517,9 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
   });
 });
 
-// ENDPOINT 1: Vitrine de Produtos (O que você já mexeu)
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
     
-    // Buscamos os dados do estabelecimento com nomes de colunas explícitos
     let sqlEstab = "SELECT id_estabelecimento, horario_abertura, horario_fechamento, fuso_horario_cidade FROM estabelecimento WHERE slug = ?";
     
     db.query(sqlEstab, [slug], function (err, estab) {
@@ -1529,14 +1527,18 @@ app.get("/cardapio_digital/:id", function (request, response) {
         
         const { id_estabelecimento, horario_abertura, horario_fechamento, fuso_horario_cidade } = estab[0];
 
-        // Lógica de Fuso Horário: Converte a hora do servidor para a hora local do 99Burger
         const dataAgora = new Date();
         const utcMilisegundos = dataAgora.getTime() + (dataAgora.getTimezoneOffset() * 60000);
         const dataHoraLocal = new Date(utcMilisegundos + (3600000 * fuso_horario_cidade));
-        const horaAtualFormatada = dataHoraLocal.toTimeString().split(' ')[0]; // Ex: "19:30:00"
+        const horaAtualFormatada = dataHoraLocal.toTimeString().split(' ')[0];
 
-        // Verifica se está dentro do intervalo de funcionamento
-        const estabelecimentoAberto = (horaAtualFormatada >= horario_abertura && horaAtualFormatada <= horario_fechamento);
+        // ✅ Corrigido: suporta turnos que cruzam a meia-noite (ex: 12:00 às 03:30)
+        let estabelecimentoAberto;
+        if (horario_abertura <= horario_fechamento) {
+            estabelecimentoAberto = horaAtualFormatada >= horario_abertura && horaAtualFormatada <= horario_fechamento;
+        } else {
+            estabelecimentoAberto = horaAtualFormatada >= horario_abertura || horaAtualFormatada <= horario_fechamento;
+        }
 
         let ssql = `
             SELECT p.*, c.descricao AS categoria 
@@ -1551,7 +1553,6 @@ app.get("/cardapio_digital/:id", function (request, response) {
             
             const produtos = result.map(p => ({ ...p, preco: parseFloat(p.preco) }));
             
-            // Retornamos um objeto organizado com o status de funcionamento
             return response.status(200).json({
                 esta_aberto: estabelecimentoAberto,
                 configuracoes: { 
@@ -1564,15 +1565,12 @@ app.get("/cardapio_digital/:id", function (request, response) {
     });
 });
 
-// ENDPOINT 2: Barra de Categorias (O QUE ESTAVA FALTANDO!)
 app.get("/categorias_digital/:id", function (request, response) {
     const slug = request.params.id;
     db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
         if (err || estab.length === 0) return response.status(404).json({ error: "Não encontrado" });
         const id_estab = estab[0].id_estabelecimento;
 
-        // Aqui filtramos as categorias inativas também para a barra de ícones
-        // E usamos 'AS categoria' para o clique do React funcionar
         let ssql = `
             SELECT id_categoria, descricao AS categoria, url_icone 
             FROM produto_categoria 
