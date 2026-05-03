@@ -1555,7 +1555,6 @@ app.get("/cardapio_digital/:id", function (request, response) {
 
         const id_estab = estab[0].id_estabelecimento;
 
-        // Mantida a sua estrutura, apenas adicionado o filtro no WHERE
         let ssql = `
             SELECT p.*, c.descricao AS categoria 
             FROM produto p
