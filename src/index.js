@@ -619,8 +619,7 @@ app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
 
     const ssql = `
         SELECT 
-            p.id_pedido, p.nome_cliente, p.status,
-            p.vl_subtotal, p.vl_entrega, p.vl_total,
+            p.id_pedido, p.nome_cliente, p.status, p.vl_total,
             p.endereco_entrega, p.forma_pagamento,
             DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_pedido
         FROM pedido p
@@ -1556,12 +1555,13 @@ app.get("/cardapio_digital/:id", function (request, response) {
 
         const id_estab = estab[0].id_estabelecimento;
 
-        // Adicionado GROUP BY para evitar que o JOIN duplique os produtos na lista
+        // Mantida a sua estrutura, apenas adicionado o filtro no WHERE
         let ssql = `
             SELECT p.*, c.descricao AS categoria 
             FROM produto p
             INNER JOIN produto_categoria c ON c.id_categoria = p.id_categoria
             WHERE p.id_estabelecimento = ?
+              AND (c.ativo IS NULL OR c.ativo != 'N')
             GROUP BY p.id_produto
             ORDER BY c.ordem, p.nome
         `;
