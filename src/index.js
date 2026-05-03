@@ -1520,23 +1520,46 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
 // ENDPOINT 1: Vitrine de Produtos (O que você já mexeu)
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
-    db.query("SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?", [slug], function (err, estab) {
-        if (err || estab.length === 0) return response.status(404).json({ error: "Não encontrado" });
-        const id_estab = estab[0].id_estabelecimento;
+    
+    // Buscamos os dados do estabelecimento com nomes de colunas explícitos
+    let sqlEstab = "SELECT id_estabelecimento, horario_abertura, horario_fechamento, fuso_horario_cidade FROM estabelecimento WHERE slug = ?";
+    
+    db.query(sqlEstab, [slug], function (err, estab) {
+        if (err || estab.length === 0) return response.status(404).json({ error: "Estabelecimento não encontrado" });
+        
+        const { id_estabelecimento, horario_abertura, horario_fechamento, fuso_horario_cidade } = estab[0];
+
+        // Lógica de Fuso Horário: Converte a hora do servidor para a hora local do 99Burger
+        const dataAgora = new Date();
+        const utcMilisegundos = dataAgora.getTime() + (dataAgora.getTimezoneOffset() * 60000);
+        const dataHoraLocal = new Date(utcMilisegundos + (3600000 * fuso_horario_cidade));
+        const horaAtualFormatada = dataHoraLocal.toTimeString().split(' ')[0]; // Ex: "19:30:00"
+
+        // Verifica se está dentro do intervalo de funcionamento
+        const estabelecimentoAberto = (horaAtualFormatada >= horario_abertura && horaAtualFormatada <= horario_fechamento);
 
         let ssql = `
             SELECT p.*, c.descricao AS categoria 
             FROM produto p
             INNER JOIN produto_categoria c ON c.id_categoria = p.id_categoria
-            WHERE p.id_estabelecimento = ?
-              AND (c.ativo IS NULL OR c.ativo != 'N')
-            GROUP BY p.id_produto
-            ORDER BY c.ordem, p.nome
+            WHERE p.id_estabelecimento = ? AND (c.ativo IS NULL OR c.ativo != 'N')
+            GROUP BY p.id_produto ORDER BY c.ordem, p.nome
         `;
-        db.query(ssql, [id_estab], function (err, result) {
+
+        db.query(ssql, [id_estabelecimento], function (err, result) {
             if (err) return response.status(500).json({ error: err.message });
+            
             const produtos = result.map(p => ({ ...p, preco: parseFloat(p.preco) }));
-            return response.status(200).json(produtos);
+            
+            // Retornamos um objeto organizado com o status de funcionamento
+            return response.status(200).json({
+                esta_aberto: estabelecimentoAberto,
+                configuracoes: { 
+                    abertura: horario_abertura, 
+                    fechamento: horario_fechamento 
+                },
+                lista_produtos: produtos
+            });
         });
     });
 });
