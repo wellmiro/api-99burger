@@ -681,33 +681,39 @@ app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
 });
 
 
-  app.get("/pedidos/itens_lista", token.ValidateJWT, function (request, response) {
-      let ssql = `
-          SELECT 
-              p.id_pedido,
-              p.numero_mesa,
-              p.nome_cliente,
-              p.numero_pessoas,
-              i.id_item,
-              o.nome AS nome_produto,
-              o.url_foto,
-              i.qtd,
-              i.vl_unitario,
-              i.vl_total,
-              i.observacao
-          FROM pedido p
-          JOIN pedido_item i ON i.id_pedido = p.id_pedido
-          JOIN produto o ON o.id_produto = i.id_produto
-          ORDER BY p.dt_pedido, i.id_item
-      `;
+ app.get("/pedidos/itens_lista", token.ValidateJWT, function (request, response) {
+    let ssql = `
+        SELECT 
+            p.id_pedido,
+            p.numero_mesa,
+            p.nome_cliente,
+            p.numero_pessoas,
+            i.id_item,
+            o.nome AS nome_produto,
+            o.url_foto,
+            i.qtd,
+            i.vl_unitario,
+            i.vl_total,
+            i.observacao
+        FROM pedido p
+        JOIN pedido_item i ON i.id_pedido = p.id_pedido
+        JOIN produto o ON o.id_produto = i.id_produto
+        ORDER BY p.dt_pedido, i.id_item
+    `;
 
-      db.query(ssql, (err, results) => {
-          if (err) {
-              return response.status(500).json({ error: err.message });
-          }
-          response.json(results);
-      });
-  });
+    db.query(ssql, (err, results) => {
+        if (err) {
+            return response.status(500).json({ error: err.message });
+        }
+        const itens = results.map(r => ({
+            ...r,
+            qtd: parseInt(r.qtd, 10) || 0,
+            vl_unitario: parseFloat(r.vl_unitario) || 0,
+            vl_total: parseFloat(r.vl_total) || 0
+        }));
+        response.json(itens);
+    });
+});
 
 
   // GET /categorias - Listar categorias do estabelecimento logado
