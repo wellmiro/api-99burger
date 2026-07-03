@@ -141,45 +141,48 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
 });
 
 
-  app.get("/produtos", function (request, response) {
-      let ssql = `
-          SELECT 
-              p.id_produto,
-              p.nome,
-              p.descricao,
-              p.url_foto,
-              p.preco,
-              p.qtd,
-              p.qtd_max,
-              p.qtd_min,
-              c.descricao AS categoria,
-              c.id_categoria
-          FROM produto p
-          JOIN produto_categoria c ON c.id_categoria = p.id_categoria
-          ORDER BY c.ordem
-      `;
+  app.get("/produtos", token.ValidateJWT, function (request, response) {
+    const id_estabelecimento = request.id_estabelecimento;
 
-      db.query(ssql, function (err, result) {
-          if (err) {
-              console.error("Erro ao buscar produtos:", err);
-              return response.status(500).send(err);
-          } else {
-              const produtos = result.map(p => ({
-                  id_produto: p.id_produto,
-                  nome: p.nome,
-                  descricao: p.descricao,
-                  url_foto: p.url_foto,
-                  preco: parseFloat(p.preco),
-                  qtd: p.qtd,
-                  qtd_max: p.qtd_max,
-                  qtd_min: p.qtd_min,
-                  categoria: p.categoria,
-                  id_categoria: p.id_categoria
-              }));
-              return response.status(200).json(produtos);
-          }
-      });
-  });
+    let ssql = `
+        SELECT 
+            p.id_produto,
+            p.nome,
+            p.descricao,
+            p.url_foto,
+            p.preco,
+            p.qtd,
+            p.qtd_max,
+            p.qtd_min,
+            c.descricao AS categoria,
+            c.id_categoria
+        FROM produto p
+        JOIN produto_categoria c ON c.id_categoria = p.id_categoria
+        WHERE p.id_estabelecimento = ?
+        ORDER BY c.ordem
+    `;
+
+    db.query(ssql, [id_estabelecimento], function (err, result) {
+        if (err) {
+            console.error("Erro ao buscar produtos:", err);
+            return response.status(500).send(err);
+        } else {
+            const produtos = result.map(p => ({
+                id_produto: p.id_produto,
+                nome: p.nome,
+                descricao: p.descricao,
+                url_foto: p.url_foto,
+                preco: parseFloat(p.preco),
+                qtd: p.qtd,
+                qtd_max: p.qtd_max,
+                qtd_min: p.qtd_min,
+                categoria: p.categoria,
+                id_categoria: p.id_categoria
+            }));
+            return response.status(200).json(produtos);
+        }
+    });
+});
 
 
   // Atualizar produto
