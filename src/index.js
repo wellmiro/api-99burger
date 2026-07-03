@@ -63,6 +63,7 @@ app.post("/login", function (req, res) {
                     tipo: usuario.tipo, 
                     status: usuario.status,
                     id_estabelecimento: usuario.id_estabelecimento,
+                    nome_estabelecimento: usuario.nome_estabelecimento,
                     dt_cadastro: usuario.dt_cadastro,
                     url_logo: usuario.url_logo, // <--- NOVO CAMPO ADICIONADO
                     token: token
