@@ -1521,12 +1521,12 @@ app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
 app.get("/cardapio_digital/:id", function (request, response) {
     const slug = request.params.id;
     
-    let sqlEstab = "SELECT id_estabelecimento, horario_abertura, horario_fechamento, fuso_horario_cidade FROM estabelecimento WHERE slug = ?";
+    let sqlEstab = "SELECT id_estabelecimento, horario_abertura, horario_fechamento, fuso_horario_cidade, latitude, longitude, taxa_base, preco_km FROM estabelecimento WHERE slug = ?";
     
     db.query(sqlEstab, [slug], function (err, estab) {
         if (err || estab.length === 0) return response.status(404).json({ error: "Estabelecimento não encontrado" });
         
-        const { id_estabelecimento, horario_abertura, horario_fechamento, fuso_horario_cidade } = estab[0];
+        const { id_estabelecimento, horario_abertura, horario_fechamento, fuso_horario_cidade, latitude, longitude, taxa_base, preco_km } = estab[0];
 
         const dataAgora = new Date();
         const utcMilisegundos = dataAgora.getTime() + (dataAgora.getTimezoneOffset() * 60000);
@@ -1556,6 +1556,10 @@ app.get("/cardapio_digital/:id", function (request, response) {
             
             return response.status(200).json({
                 esta_aberto: estabelecimentoAberto,
+                latitude: latitude !== null ? parseFloat(latitude) : null,
+                longitude: longitude !== null ? parseFloat(longitude) : null,
+                taxa_base: taxa_base !== null ? parseFloat(taxa_base) : null,
+                preco_km: preco_km !== null ? parseFloat(preco_km) : null,
                 configuracoes: { 
                     abertura: horario_abertura, 
                     fechamento: horario_fechamento 
