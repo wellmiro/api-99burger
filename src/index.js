@@ -973,6 +973,24 @@ app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
     });
 });
 
+// Rota exclusiva para o Dashboard React buscar os dados e horários da loja logada
+app.get("/dashboard/estabelecimento", token.ValidateJWT, function (request, response) {
+    const id_estabelecimento = request.id_estabelecimento;
+
+    const ssql = `
+        SELECT nome AS nome_empresa, rua, numero, cidade, estado, cep, logo AS logo_empresa,
+               horario_abertura, horario_fechamento
+        FROM estabelecimento
+        WHERE id_estabelecimento = ?
+    `;
+
+    db.query(ssql, [id_estabelecimento], function (err, result) {
+        if (err) return response.status(500).json({ error: err.message });
+        if (result.length === 0) return response.status(404).json({ error: "Estabelecimento não encontrado" });
+        return response.status(200).json(result[0]);
+    });
+});
+
   // Rota para buscar a forma de pagamento de um pedido
 app.get("/pedidos/:id_pedido", (req, res) => {
   const id_pedido = req.params.id_pedido;
