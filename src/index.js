@@ -36,12 +36,11 @@ app.post("/login", function (req, res) {
     if (!email || !senha) return res.status(400).json({ error: "Email e senha obrigatórios" });
 
     // SELECT agora com JOIN para buscar a logo da tabela estabelecimento
-    const ssql = `
-        SELECT u.id_usuario, u.nome, u.email, u.senha, u.tipo, u.status, 
-               u.id_estabelecimento, u.dt_cadastro, e.logo as url_logo 
-        FROM usuario u
-        INNER JOIN estabelecimento e ON (e.id_estabelecimento = u.id_estabelecimento)
-        WHERE u.email = ?`;
+    const ssql = `SELECT u.id_usuario, u.nome, u.email, u.senha, u.tipo, u.status, 
+                     u.id_estabelecimento, e.nome as nome_estabelecimento, u.dt_cadastro, e.logo as url_logo 
+              FROM usuario u
+              INNER JOIN estabelecimento e ON (e.id_estabelecimento = u.id_estabelecimento)
+              WHERE u.email = ?`;
     
     db.query(ssql, [email], function (err, result) {
         if (err) return res.status(500).json({ error: "Erro no banco" });
