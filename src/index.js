@@ -492,8 +492,8 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
               p.vl_total,
               c.descricao AS categoria,
               c.url_icone AS categoria_icone
-           FROM pedido p
-          LEFT JOIN usuario u ON u.id_usuario = p.id_usuario  // ✅ LEFT JOIN
+          FROM pedido p
+          LEFT JOIN usuario u ON u.id_usuario = p.id_usuario
           JOIN pedido_item i ON i.id_pedido = p.id_pedido
           JOIN produto o ON o.id_produto = i.id_produto
           LEFT JOIN produto_categoria c ON c.id_categoria = o.id_categoria
