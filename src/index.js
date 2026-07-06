@@ -1162,42 +1162,61 @@ app.put("/notificacoes/:id", token.ValidateJWT, function (request, response) {
 });
 
 // 3. Criar uma nova notificação (vinda do Cardápio Digital)
-app.post("/notificacoes", token.ValidateJWT, function (request, response) {
-    const id_estabelecimento = request.id_estabelecimento; // Pega direto do Token por segurança
-    const { id_usuario, mensagem, tipo, id_produto } = request.body;
+// 4. Criar notificação vinda do Cardápio Digital (fluxo PÚBLICO, sem login/token)
+app.post('/notificacoes/publico', async (req, res) => {
+    const { slug, mensagem, id_pedido, id_produto } = req.body;
 
-    // Validação básica dos campos obrigatórios
-    if (!id_usuario || !mensagem || !tipo) {
-        return response.status(400).json({ error: "Os campos id_usuario, mensagem e tipo são obrigatórios." });
+    if (!slug || !mensagem) {
+        return res.status(400).json({ error: 'Campos obrigatórios: slug e mensagem.' });
     }
 
-    // O SQL insere o status 'A' (Ativa) e a data atual automaticamente.
-    // O id_produto aceita NULL caso não seja enviado.
-    const ssql = `
-        INSERT INTO notificacoes (id_usuario, mensagem, status, dt_criacao, id_estabelecimento, tipo, id_produto)
-        VALUES (?, ?, 'A', NOW(), ?, ?, ?)
-    `;
-
-    // Se o id_produto não vier no body, passamos null para o banco aceitar numa boa
-    const valores = [
-        id_usuario, 
-        mensagem, 
-        id_estabelecimento, 
-        tipo, 
-        id_produto || null
-    ];
-
-    db.query(ssql, valores, function (err, result) {
-        if (err) {
-            return response.status(500).json({ error: err.message });
-        }
-        
-        // Retorna status 201 (Created) e devolve o ID da notificação gerada
-        return response.status(201).json({ 
-            ok: true, 
-            message: "Notificação gerada com sucesso!",
-            id_notificacao: result.insertId 
+    try {
+        // Descobre o id_estabelecimento a partir do slug (mesmo padrão do /pedidos/publico)
+        const estabelecimento = await new Promise((resolve, reject) => {
+            db.query(
+                'SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?',
+                [slug],
+                (err, result) => {
+                    if (err) return reject(err);
+                    if (result.length === 0) return reject(new Error('Estabelecimento não encontrado para o slug: ' + slug));
+                    resolve(result[0]);
+                }
+            );
         });
+
+        const id_estabelecimento = estabelecimento.id_estabelecimento;
+
+        // tipo fixo em 'CARDAPIO_DIGITAL' pra bater com o filtro do GET /notificacoes
+        const ssql = `
+            INSERT INTO notificacoes (id_usuario, mensagem, status, dt_criacao, id_estabelecimento, tipo, id_produto, id_pedido)
+            VALUES (0, ?, 'A', NOW(), ?, 'CARDAPIO_DIGITAL', ?, ?)
+        `;
+
+        const valores = [mensagem, id_estabelecimento, id_produto || null, id_pedido || null];
+
+        db.query(ssql, valores, function (err, result) {
+            if (err) return res.status(500).json({ error: err.message });
+            return res.status(201).json({
+                ok: true,
+                message: 'Notificação gerada com sucesso!',
+                id_notificacao: result.insertId
+            });
+        });
+    } catch (e) {
+        console.error('Erro no /notificacoes/publico:', e);
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.get("/estabelecimentos", function (request, response) {
+    const ssql = "SELECT * FROM estabelecimentos";
+
+    db.query(ssql, function (err, result) {
+        if (err) {
+            return response.status(500).json({ error: "Erro ao buscar estabelecimentos: " + err.message });
+        } else {
+            return response.status(200).json(result);
+        }
     });
 });
 
