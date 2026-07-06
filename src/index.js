@@ -1137,32 +1137,6 @@ app.get("/notificacoes", token.ValidateJWT, function (request, response) {
     });
 });
 
-// 2. Marca todas as notificações do usuário logado como lidas ('L')
-// Removi o :id_usuario da URL pois pegamos direto do Token por segurança
-app.put('/notificacoes/:id_usuario', token.ValidateJWT, (req, res) => {
-    const id_usuario_url = parseInt(req.params.id_usuario, 10);
-    const id_estabelecimento = req.id_estabelecimento; // Pega do Token
-
-    // O SQL agora protege para que o usuário só limpe as notificações 
-    // do seu próprio ID e do seu próprio estabelecimento
-    const sql = `
-      UPDATE notificacoes
-      SET status = 'L'
-      WHERE id_usuario = ? AND id_estabelecimento = ? AND status = 'A'
-    `;
-
-    db.query(sql, [id_usuario_url, id_estabelecimento], (err, results) => {
-      if (err) {
-        return res.status(500).json({ error: err.message });
-      }
-
-      return res.json({ 
-        message: 'Notificações marcadas como lidas', 
-        atualizadas: results.affectedRows 
-      });
-    });
-});
-
 app.put("/notificacoes/:id", token.ValidateJWT, function (request, response) {
     const id_notificacao = request.params.id;
     const id_estabelecimento = request.id_estabelecimento;
