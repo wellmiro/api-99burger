@@ -1156,6 +1156,45 @@ app.put("/notificacoes/:id", token.ValidateJWT, function (request, response) {
     });
 });
 
+// 3. Criar uma nova notificação (vinda do Cardápio Digital)
+app.post("/notificacoes", token.ValidateJWT, function (request, response) {
+    const id_estabelecimento = request.id_estabelecimento; // Pega direto do Token por segurança
+    const { id_usuario, mensagem, tipo, id_produto } = request.body;
+
+    // Validação básica dos campos obrigatórios
+    if (!id_usuario || !mensagem || !tipo) {
+        return response.status(400).json({ error: "Os campos id_usuario, mensagem e tipo são obrigatórios." });
+    }
+
+    // O SQL insere o status 'A' (Ativa) e a data atual automaticamente.
+    // O id_produto aceita NULL caso não seja enviado.
+    const ssql = `
+        INSERT INTO notificacoes (id_usuario, mensagem, status, dt_criacao, id_estabelecimento, tipo, id_produto)
+        VALUES (?, ?, 'A', NOW(), ?, ?, ?)
+    `;
+
+    // Se o id_produto não vier no body, passamos null para o banco aceitar numa boa
+    const valores = [
+        id_usuario, 
+        mensagem, 
+        id_estabelecimento, 
+        tipo, 
+        id_produto || null
+    ];
+
+    db.query(ssql, valores, function (err, result) {
+        if (err) {
+            return response.status(500).json({ error: err.message });
+        }
+        
+        // Retorna status 201 (Created) e devolve o ID da notificação gerada
+        return response.status(201).json({ 
+            ok: true, 
+            message: "Notificação gerada com sucesso!",
+            id_notificacao: result.insertId 
+        });
+    });
+});
 
 
 app.post('/pedidos/:id/atualizar_impressao', token.ValidateJWT, (req, res) => {
