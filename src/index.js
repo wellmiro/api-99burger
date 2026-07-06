@@ -1168,18 +1168,26 @@ app.post('/notificacoes/publico', async (req, res) => {
     const { slug, mensagem, id_pedido, id_produto } = req.body;
 
     if (!slug || !mensagem) {
-        return res.status(400).json({ error: 'Campos obrigatórios: slug e mensagem.' });
+        return res.status(400).json({
+            error: 'Campos obrigatórios: slug e mensagem.'
+        });
     }
 
     try {
-        // Descobre o id_estabelecimento a partir do slug (mesmo padrão do /pedidos/publico)
+        // Busca o estabelecimento pelo slug recebido do cardápio digital
         const estabelecimento = await new Promise((resolve, reject) => {
             db.query(
-                'SELECT id_estabelecimento FROM estabelecimento WHERE slug = ?',
+                'SELECT id_estabelecimento FROM estabelecimento WHERE slug = ? LIMIT 1',
                 [slug],
                 (err, result) => {
                     if (err) return reject(err);
-                    if (result.length === 0) return reject(new Error('Estabelecimento não encontrado para o slug: ' + slug));
+
+                    if (result.length === 0) {
+                        return reject(new Error(
+                            'Estabelecimento não encontrado para o slug: ' + slug
+                        ));
+                    }
+
                     resolve(result[0]);
                 }
             );
@@ -1187,25 +1195,61 @@ app.post('/notificacoes/publico', async (req, res) => {
 
         const id_estabelecimento = estabelecimento.id_estabelecimento;
 
-        // tipo fixo em 'CARDAPIO_DIGITAL' pra bater com o filtro do GET /notificacoes
-        const ssql = `
-            INSERT INTO notificacoes (id_usuario, mensagem, status, dt_criacao, id_estabelecimento, tipo, id_produto, id_pedido)
-            VALUES (0, ?, 'A', NOW(), ?, 'CARDAPIO_DIGITAL', ?, ?)
+        // Grava a notificação para o sistema Delphi
+        const sql = `
+            INSERT INTO notificacoes
+            (
+                id_usuario,
+                mensagem,
+                status,
+                dt_criacao,
+                id_estabelecimento,
+                tipo,
+                id_produto,
+                id_pedido
+            )
+            VALUES
+            (
+                0,
+                ?,
+                'A',
+                NOW(),
+                ?,
+                'CARDAPIO_DIGITAL',
+                ?,
+                ?
+            )
         `;
 
-        const valores = [mensagem, id_estabelecimento, id_produto || null, id_pedido || null];
+        const valores = [
+            mensagem,
+            id_estabelecimento,
+            id_produto || null,
+            id_pedido || null
+        ];
 
-        db.query(ssql, valores, function (err, result) {
-            if (err) return res.status(500).json({ error: err.message });
+        db.query(sql, valores, function (err, result) {
+            if (err) {
+                console.error("Erro ao inserir notificação:", err);
+
+                return res.status(500).json({
+                    error: err.message
+                });
+            }
+
             return res.status(201).json({
                 ok: true,
                 message: 'Notificação gerada com sucesso!',
                 id_notificacao: result.insertId
             });
         });
+
     } catch (e) {
         console.error('Erro no /notificacoes/publico:', e);
-        res.status(500).json({ error: e.message });
+
+        return res.status(500).json({
+            error: e.message
+        });
     }
 });
 
