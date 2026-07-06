@@ -1162,95 +1162,65 @@ app.put("/notificacoes/:id", token.ValidateJWT, function (request, response) {
     });
 });
 
-// 3. Criar uma nova notificação (vinda do Cardápio Digital)
-// 4. Criar notificação vinda do Cardápio Digital (fluxo PÚBLICO, sem login/token)
-app.post('/notificacoes/publico/:slug', async (req, res) => {
-    const { slug } = req.params;
-    const { mensagem, id_pedido, id_produto } = req.body;
+app.post('/notificacoes/publico', async (req, res) => {
 
-    if (!slug || !mensagem) {
+    const { id_estabelecimento, mensagem, id_pedido, id_produto } = req.body;
+
+    if (!id_estabelecimento || !mensagem) {
         return res.status(400).json({
-            error: 'Campos obrigatórios: slug e mensagem.'
+            error: 'Campos obrigatórios: id_estabelecimento e mensagem.'
         });
     }
 
-    try {
-        // Busca o estabelecimento pelo slug recebido na URL
-        const estabelecimento = await new Promise((resolve, reject) => {
-            db.query(
-                'SELECT id_estabelecimento FROM estabelecimento WHERE slug = ? LIMIT 1',
-                [slug],
-                (err, result) => {
-                    if (err) return reject(err);
-
-                    if (result.length === 0) {
-                        return reject(new Error(
-                            'Estabelecimento não encontrado para o slug: ' + slug
-                        ));
-                    }
-
-                    resolve(result[0]);
-                }
-            );
-        });
-
-        const id_estabelecimento = estabelecimento.id_estabelecimento;
-
-        const sql = `
-            INSERT INTO notificacoes
-            (
-                id_usuario,
-                mensagem,
-                status,
-                dt_criacao,
-                id_estabelecimento,
-                tipo,
-                id_produto,
-                id_pedido
-            )
-            VALUES
-            (
-                0,
-                ?,
-                'A',
-                NOW(),
-                ?,
-                'CARDAPIO_DIGITAL',
-                ?,
-                ?
-            )
-        `;
-
-        const valores = [
+    const sql = `
+        INSERT INTO notificacoes
+        (
+            id_usuario,
             mensagem,
+            status,
+            dt_criacao,
             id_estabelecimento,
-            id_produto || null,
-            id_pedido || null
-        ];
+            tipo,
+            id_produto,
+            id_pedido
+        )
+        VALUES
+        (
+            0,
+            ?,
+            'A',
+            NOW(),
+            ?,
+            'CARDAPIO_DIGITAL',
+            ?,
+            ?
+        )
+    `;
 
-        db.query(sql, valores, function (err, result) {
-            if (err) {
-                console.error("Erro ao inserir notificação:", err);
+    const valores = [
+        mensagem,
+        id_estabelecimento,
+        id_produto || null,
+        id_pedido || null
+    ];
 
-                return res.status(500).json({
-                    error: err.message
-                });
-            }
+    db.query(sql, valores, (err, result) => {
 
-            return res.status(201).json({
-                ok: true,
-                message: 'Notificação gerada com sucesso!',
-                id_notificacao: result.insertId
+        if(err){
+            console.error(err);
+
+            return res.status(500).json({
+                error: err.message
             });
+        }
+
+        res.status(201).json({
+            ok:true,
+            id_notificacao: result.insertId
         });
 
-    } catch (e) {
-        console.error('Erro no /notificacoes/publico/:slug:', e);
+    });
 
-        return res.status(500).json({
-            error: e.message
-        });
-    }
 });
 
 app.get("/estabelecimentos/:slug", function (request, response) {
