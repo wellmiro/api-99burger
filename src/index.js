@@ -1164,8 +1164,9 @@ app.put("/notificacoes/:id", token.ValidateJWT, function (request, response) {
 
 // 3. Criar uma nova notificação (vinda do Cardápio Digital)
 // 4. Criar notificação vinda do Cardápio Digital (fluxo PÚBLICO, sem login/token)
-app.post('/notificacoes/publico', async (req, res) => {
-    const { slug, mensagem, id_pedido, id_produto } = req.body;
+app.post('/notificacoes/publico/:slug', async (req, res) => {
+    const { slug } = req.params;
+    const { mensagem, id_pedido, id_produto } = req.body;
 
     if (!slug || !mensagem) {
         return res.status(400).json({
@@ -1174,7 +1175,7 @@ app.post('/notificacoes/publico', async (req, res) => {
     }
 
     try {
-        // Busca o estabelecimento pelo slug recebido do cardápio digital
+        // Busca o estabelecimento pelo slug recebido na URL
         const estabelecimento = await new Promise((resolve, reject) => {
             db.query(
                 'SELECT id_estabelecimento FROM estabelecimento WHERE slug = ? LIMIT 1',
@@ -1195,7 +1196,6 @@ app.post('/notificacoes/publico', async (req, res) => {
 
         const id_estabelecimento = estabelecimento.id_estabelecimento;
 
-        // Grava a notificação para o sistema Delphi
         const sql = `
             INSERT INTO notificacoes
             (
@@ -1245,7 +1245,7 @@ app.post('/notificacoes/publico', async (req, res) => {
         });
 
     } catch (e) {
-        console.error('Erro no /notificacoes/publico:', e);
+        console.error('Erro no /notificacoes/publico/:slug:', e);
 
         return res.status(500).json({
             error: e.message
