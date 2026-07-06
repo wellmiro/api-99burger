@@ -1118,20 +1118,25 @@ app.post('/usuarios', (req, res) => {
 });
 
 
-
-  // Retorna todas as notificações não lidas de um usuário
 // 1. Retorna todas as notificações ativas ('A') do estabelecimento logado
 app.get("/notificacoes", token.ValidateJWT, function (request, response) {
     const id_estabelecimento = request.id_estabelecimento;
 
-    // Adicionamos o filtro: AND tipo = 'CARDAPIO_DIGITAL'
-    // Isso garante que pedidos de balcão (que não possuem esse tipo) não apareçam aqui.
-    let ssql = "SELECT * FROM notificacoes WHERE status = 'A' AND id_estabelecimento = ? AND tipo = 'CARDAPIO_DIGITAL' ORDER BY id_notificacao DESC"; 
+    // Verifique se o campo 'id_pedido' existe na tabela 'notificacoes'
+    const ssql = `
+        SELECT id_notificacao, id_usuario, mensagem, status, dt_criacao, 
+               id_estabelecimento, tipo, id_produto, id_pedido 
+        FROM notificacoes 
+        WHERE status = 'A' AND id_estabelecimento = ? AND tipo = 'CARDAPIO_DIGITAL' 
+        ORDER BY id_notificacao DESC
+    `; 
 
     db.query(ssql, [id_estabelecimento], function (err, result) {
         if (err) {
             return response.status(500).json({ error: err.message });
         } else {
+            // Log para você ver no terminal do Node o que está sendo enviado
+            console.log("JSON enviado para o Delphi:", result);
             return response.status(200).json(result);
         }
     });
