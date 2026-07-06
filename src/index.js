@@ -19,6 +19,7 @@ app.use(cors({
     credentials: true
 }));
 
+
 // --- ROTAS ---
 
 app.get("/versao", function (req, res) {
@@ -1208,15 +1209,30 @@ app.post('/notificacoes/publico', async (req, res) => {
     }
 });
 
-app.get("/estabelecimentos", function (request, response) {
-    const ssql = "SELECT * FROM estabelecimentos";
+app.get("/estabelecimentos/:slug", function (request, response) {
+    const { slug } = request.params;
 
-    db.query(ssql, function (err, result) {
+    const ssql = `
+        SELECT *
+        FROM estabelecimento
+        WHERE slug = ?
+        LIMIT 1
+    `;
+
+    db.query(ssql, [slug], function (err, result) {
         if (err) {
-            return response.status(500).json({ error: "Erro ao buscar estabelecimentos: " + err.message });
-        } else {
-            return response.status(200).json(result);
+            return response.status(500).json({
+                error: "Erro ao buscar estabelecimento: " + err.message
+            });
         }
+
+        if (result.length === 0) {
+            return response.status(404).json({
+                error: "Estabelecimento não encontrado."
+            });
+        }
+
+        return response.status(200).json(result[0]);
     });
 });
 
