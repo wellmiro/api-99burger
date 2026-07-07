@@ -1123,26 +1123,25 @@ app.post('/usuarios', (req, res) => {
 app.get("/notificacoes", token.ValidateJWT, function (request, response) {
     const id_estabelecimento = request.id_estabelecimento;
 
-    // Verifique se o campo 'id_pedido' existe na tabela 'notificacoes'
     const ssql = `
-        SELECT id_notificacao, id_usuario, mensagem, status, dt_criacao, 
-               id_estabelecimento, tipo, id_produto, id_pedido 
-        FROM notificacoes 
-        WHERE status = 'A' AND id_estabelecimento = ? AND tipo = 'CARDAPIO_DIGITAL' 
-        ORDER BY id_notificacao DESC
-    `; 
+        SELECT id_notificacao, id_usuario, mensagem, status, dt_criacao,
+               id_estabelecimento, tipo, id_produto, id_pedido
+        FROM notificacoes
+        WHERE status = 'A'
+          AND id_estabelecimento = ?
+          AND tipo = 'CARDAPIO_DIGITAL'
+        ORDER BY id_notificacao ASC
+    `;
 
     db.query(ssql, [id_estabelecimento], function (err, result) {
         if (err) {
             return response.status(500).json({ error: err.message });
-        } else {
-            // Log para você ver no terminal do Node o que está sendo enviado
-            console.log("JSON enviado para o Delphi:", result);
-            return response.status(200).json(result);
         }
+
+        console.log("JSON enviado para o Delphi:", result);
+        return response.status(200).json(result);
     });
 });
-
 app.put("/notificacoes/:id", token.ValidateJWT, function (request, response) {
     const id_notificacao = request.params.id;
     const id_estabelecimento = request.id_estabelecimento;
@@ -1859,4 +1858,4 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
 });
-// v2
+// v2 bugou kkk
