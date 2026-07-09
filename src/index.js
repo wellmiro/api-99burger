@@ -145,6 +145,29 @@ app.post('/usuarios', token.ValidateJWT, (req, res) => {
     });
 });
 
+// Rota para consultar estoque em tempo real
+app.get('/produtos/estoque/:id', (req, res) => {
+    const idProduto = req.params.id;
+
+    // Ajuste o SQL conforme o nome da sua tabela e coluna de estoque
+    const sql = 'SELECT qtd FROM produtos WHERE id = ?';
+
+    db.query(sql, [idProduto], (err, results) => {
+        if (err) {
+            console.error(err);
+            return res.status(500).json({ error: "Erro ao consultar estoque" });
+        }
+
+        if (results.length > 0) {
+            // Retorna o objeto com a quantidade encontrada
+            res.json({ qtd: results[0].qtd });
+        } else {
+            // Se o produto não existir, retorna 404
+            res.status(404).json({ error: "Produto não encontrado" });
+        }
+    });
+});
+
   // Rotas
   // GET: listar produtos do cardápio com qtd_min e qtd_max
   // O id_estabelecimento vem 'carimbado' no token e o middleware joga no request
