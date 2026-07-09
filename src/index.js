@@ -34,49 +34,107 @@ app.get("/versao", function (req, res) {
 
 app.post("/login", function (req, res) {
     const { email, senha } = req.body;
-    if (!email || !senha) return res.status(400).json({ error: "Email e senha obrigatórios" });
 
-    // SELECT agora com JOIN para buscar a logo da tabela estabelecimento
-    const ssql = `SELECT u.id_usuario, u.nome, u.email, u.senha, u.tipo, u.status, 
-                     u.id_estabelecimento, e.nome as nome_estabelecimento, u.dt_cadastro, e.logo as url_logo 
-              FROM usuario u
-              INNER JOIN estabelecimento e ON (e.id_estabelecimento = u.id_estabelecimento)
-              WHERE u.email = ?`;
-    
+    console.log("\n================ LOGIN ================");
+    console.log("Email recebido:", `"${email}"`);
+    console.log("Senha recebida:", `"${senha}"`);
+
+    if (!email || !senha)
+        return res.status(400).json({ error: "Email e senha obrigatórios" });
+
+    // Descobre em qual banco a API está conectada
+    db.query("SELECT DATABASE() AS banco", (err, banco) => {
+        if (!err) {
+            console.log("Banco:", banco[0].banco);
+        }
+    });
+
+    // Conta quantos usuários existem
+    db.query("SELECT COUNT(*) AS total FROM usuario", (err, total) => {
+        if (!err) {
+            console.log("Total de usuários:", total[0].total);
+        }
+    });
+
+    const ssql = `
+        SELECT
+            u.id_usuario,
+            u.nome,
+            u.email,
+            u.senha,
+            u.tipo,
+            u.status,
+            u.id_estabelecimento,
+            e.nome AS nome_estabelecimento,
+            u.dt_cadastro,
+            e.logo AS url_logo
+        FROM usuario u
+        INNER JOIN estabelecimento e
+            ON e.id_estabelecimento = u.id_estabelecimento
+        WHERE u.email = ?
+    `;
+
     db.query(ssql, [email], function (err, result) {
-        if (err) return res.status(500).json({ error: "Erro no banco" });
-        
-        if (result.length > 0) {
-            const usuario = result[0];
-            
-            if (senha === usuario.senha) {
-                // Gerando o Token (Mantido exatamente como estava)
-                const token = jwt.sign({ 
-                    id_usuario: usuario.id_usuario,
-                    id_estabelecimento: usuario.id_estabelecimento 
-                }, process.env.JWT_SECRET, { expiresIn: '24h' });
 
-                // Retornando o JSON completo para o Delphi + o campo url_logo
+        if (err) {
+            console.error("Erro SQL:", err);
+            return res.status(500).json({ error: "Erro no banco" });
+        }
+
+        console.log("Resultado da consulta:", result.length);
+
+        if (result.length > 0) {
+
+            const usuario = result[0];
+
+            console.log("Usuário encontrado:");
+            console.log(usuario);
+
+            if (senha === usuario.senha) {
+
+                console.log("Senha correta.");
+
+                const token = jwt.sign(
+                    {
+                        id_usuario: usuario.id_usuario,
+                        id_estabelecimento: usuario.id_estabelecimento
+                    },
+                    process.env.JWT_SECRET,
+                    { expiresIn: "24h" }
+                );
+
                 return res.status(200).json({
                     id_usuario: usuario.id_usuario,
                     nome: usuario.nome,
                     email: usuario.email,
-                    tipo: usuario.tipo, 
+                    tipo: usuario.tipo,
                     status: usuario.status,
                     id_estabelecimento: usuario.id_estabelecimento,
                     nome_estabelecimento: usuario.nome_estabelecimento,
                     dt_cadastro: usuario.dt_cadastro,
-                    url_logo: usuario.url_logo, // <--- NOVO CAMPO ADICIONADO
+                    url_logo: usuario.url_logo,
                     token: token
-                }); 
+                });
+
             } else {
-                return res.status(401).json({ error: "Senha incorreta" });
+
+                console.log("Senha incorreta.");
+
+                return res.status(401).json({
+                    error: "Senha incorreta"
+                });
             }
+
         } else {
-            return res.status(404).json({ error: "Usuário não encontrado" });
+
+            console.log("Usuário NÃO encontrado para:", email);
+
+            return res.status(404).json({
+                error: "Usuário não encontrado"
+            });
         }
-    }); 
-}); // <--- Fecha o app.post
+    });
+});
 
 app.post('/usuarios', token.ValidateJWT, (req, res) => {
     const { nome, email, senha, tipo } = req.body;
