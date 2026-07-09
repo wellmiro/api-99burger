@@ -522,6 +522,25 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
     });
 });
 
+// Endpoint para validar a existência do pedido antes de processar a notificação
+app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
+    const id_pedido = req.params.id_pedido;
+    const id_estabelecimento = req.id_estabelecimento;
+
+    // Busca apenas o ID para confirmar que ele existe e pertence ao estabelecimento
+    const ssql = "SELECT id_pedido FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?";
+
+    db.query(ssql, [id_pedido, id_estabelecimento], function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+
+        if (result.length > 0) {
+            return res.status(200).json({ status: "existe" });
+        } else {
+            return res.status(404).json({ status: "nao_encontrado" });
+        }
+    });
+});
+
  app.get("/pedidos", token.ValidateJWT, function (request, response) {
     // O ID vem do Token decodificado pelo middleware
     const id_est = request.id_estabelecimento; 
