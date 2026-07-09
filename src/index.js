@@ -149,12 +149,13 @@ app.post('/usuarios', token.ValidateJWT, (req, res) => {
 app.get('/produtos/estoque/:id', (req, res) => {
     const idProduto = req.params.id;
 
-    // Ajuste o SQL conforme o nome da sua tabela e coluna de estoque
-    const sql = 'SELECT qtd FROM produtos WHERE id = ?';
+    // Correção: Alterado de 'produtos' para 'produto' 
+    // e de 'id' para 'id_produto' conforme o seu schema
+    const sql = 'SELECT qtd FROM produto WHERE id_produto = ?';
 
     db.query(sql, [idProduto], (err, results) => {
         if (err) {
-            console.error(err);
+            console.error("Erro no SQL de estoque:", err);
             return res.status(500).json({ error: "Erro ao consultar estoque" });
         }
 
