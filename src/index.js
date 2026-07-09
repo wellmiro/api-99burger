@@ -1307,6 +1307,27 @@ app.get("/estabelecimentos/:slug", function (request, response) {
     });
 });
 
+// Adicione esta rota no seu arquivo de rotas ou server.js principal
+app.get("/pedidos/:id", async (req, res) => {
+    const idPedido = req.params.id;
+
+    try {
+        // Altere 'db' para o nome da sua variável de conexão com o banco
+        // Exemplo hipotético usando mysql/mysql2:
+        const [rows] = await db.execute('SELECT id_pedido FROM pedido WHERE id_pedido = ?', [idPedido]);
+
+        if (rows.length > 0) {
+            // Pedido encontrado: retorna 200
+            res.status(200).json({ status: "encontrado", id_pedido: idPedido });
+        } else {
+            // Pedido NÃO existe: retorna 404
+            res.status(404).json({ error: "Pedido não encontrado" });
+        }
+    } catch (error) {
+        res.status(500).json({ error: "Erro interno no servidor" });
+    }
+});
+
 
 app.post('/pedidos/:id/atualizar_impressao', token.ValidateJWT, (req, res) => {
     const id_pedido = req.params.id;

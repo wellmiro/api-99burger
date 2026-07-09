@@ -1,0 +1,277 @@
+impressão original
+
+olha como ta tava antes
+
+
+
+procedure TDmPrincipal.GerarPedido(confirmar_impressao: Boolean; id_pedido: Integer; numero_mesa: Integer);
+
+var
+
+  resp: IResponse;
+
+  jsonObj, jsonPrint, itemObj: TJSONObject;
+
+begin
+
+  // 1. VALIDAÇÕES DE SEGURANÇA
+
+  if TSession.ID_USUARIO <= 0 then
+
+    raise Exception.Create('Usuário inválido. Por favor, faça login novamente.');
+
+
+
+  if Trim(Nome_Cliente) = '' then
+
+    Nome_Cliente := 'Não Informado';
+
+
+
+  // 2. SE FOR UM PEDIDO QUE JÁ EXISTE
+
+  if (id_pedido > 0) and (Itens.Count = 0) then
+
+  begin
+
+    ListarPedidoItem;
+
+
+
+    TabPedidoItens.Filtered := False;
+
+    TabPedidoItens.Filter := 'id_pedido = ' + id_pedido.ToString;
+
+    TabPedidoItens.Filtered := True;
+
+
+
+    FreeAndNil(Itens);
+
+    Itens := TJSONArray.Create;
+
+
+
+    Subtotal := 0;
+
+
+
+    TabPedidoItens.First;
+
+    while not TabPedidoItens.Eof do
+
+    begin
+
+      itemObj := TJSONObject.Create;
+
+      itemObj.AddPair('nome_produto',
+
+        TJSONString.Create(TabPedidoItens.FieldByName('nome_produto').AsString));
+
+      itemObj.AddPair('qtd',
+
+        TJSONNumber.Create(TabPedidoItens.FieldByName('qtd').AsInteger));
+
+      itemObj.AddPair('vl_unitario',
+
+        TJSONNumber.Create(TabPedidoItens.FieldByName('vl_unitario').AsFloat));
+
+      itemObj.AddPair('vl_total',
+
+        TJSONNumber.Create(TabPedidoItens.FieldByName('vl_total').AsFloat));
+
+      itemObj.AddPair('observacao',
+
+        TJSONString.Create(TabPedidoItens.FieldByName('observacao').AsString));
+
+
+
+      Itens.AddElement(itemObj);
+
+
+
+      Subtotal := Subtotal +
+
+        TabPedidoItens.FieldByName('vl_total').AsFloat;
+
+
+
+      TabPedidoItens.Next;
+
+    end;
+
+  end;
+
+
+
+  // 3. JSON DO BACKEND
+
+  jsonObj := TJSONObject.Create;
+
+  try
+
+    jsonObj.AddPair('id_usuario', TJSONNumber.Create(TSession.ID_USUARIO));
+
+    jsonObj.AddPair('id_estabelecimento', TJSONNumber.Create(TSession.ID_ESTABELECIMENTO));
+
+    jsonObj.AddPair('nome_cliente', TJSONString.Create(Nome_Cliente));
+
+    jsonObj.AddPair('local_consumo', TJSONString.Create(Local_Consumo));
+
+    jsonObj.AddPair('vl_subtotal', TJSONNumber.Create(Subtotal));
+
+    jsonObj.AddPair('vl_entrega', TJSONNumber.Create(Entrega));
+
+    jsonObj.AddPair('vl_total', TJSONNumber.Create(Subtotal + Entrega));
+
+    jsonObj.AddPair('endereco_entrega', TJSONString.Create(Endereco));
+
+    jsonObj.AddPair('forma_pagamento', TJSONString.Create(Forma_Pagamento));
+
+    jsonObj.AddPair('dinheiro', TJSONNumber.Create(Dinheiro));
+
+    jsonObj.AddPair('troco', TJSONNumber.Create(Troco));
+
+    jsonObj.AddPair('numero_mesa', TJSONNumber.Create(numero_mesa));
+
+    jsonObj.AddPair('observacao', TJSONString.Create(Observacao));
+
+    jsonObj.AddPair('itens', Itens.Clone as TJSONArray);
+
+
+
+    // 4. ENVIA PARA O SERVIDOR
+
+    if id_pedido = 0 then
+
+    begin
+
+      resp := TRequest.New
+
+        .BaseURL(URL_BASE)
+
+        .Resource('pedidos')
+
+        .Token('Bearer ' + TSession.TOKEN)
+
+        .ContentType('application/json')
+
+        .AddBody(jsonObj.ToJSON)
+
+        .Post;
+
+
+
+      if resp.StatusCode <> 201 then
+
+        raise Exception.Create('Erro ao lançar pedido no servidor: ' + resp.Content);
+
+
+
+      id_pedido := TJSONObject.ParseJSONValue(resp.Content)
+
+        .GetValue<Integer>('id_pedido', 0);
+
+
+
+      FrmPrincipal.ID_PEDIDO := id_pedido;
+
+    end;
+
+
+
+    // 5. IMPRESSÃO
+
+    if confirmar_impressao then
+
+    begin
+
+      jsonPrint := jsonObj.Clone as TJSONObject;
+
+      try
+
+        if jsonPrint.Values['id_pedido'] <> nil then
+
+          jsonPrint.RemovePair('id_pedido');
+
+
+
+        jsonPrint.AddPair('id_pedido', TJSONNumber.Create(id_pedido));
+
+
+
+        if Trim(Nome_Estabelecimento) = '' then
+
+          Nome_Estabelecimento := TSession.NOME_ESTABELECIMENTO;
+
+
+
+        jsonPrint.AddPair(
+
+          'nome_estabelecimento',
+
+          TJSONString.Create(Nome_Estabelecimento)
+
+        );
+
+
+
+        // GUARDA UMA CÓPIA PARA REIMPRESSÃO
+
+        if Assigned(UltimoJsonImpressao) then
+
+          FreeAndNil(UltimoJsonImpressao);
+
+
+
+        UltimoJsonImpressao :=
+
+          jsonPrint.Clone as TJSONObject;
+
+
+
+        // ENVIA PARA A IMPRESSORA
+
+        resp := TRequest.New
+
+          .BaseURL(URL_PRINTER)
+
+          .Resource('imprimir')
+
+          .ContentType('application/json')
+
+          .Accept('application/json')
+
+          .Timeout(10000)
+
+          .AddBody(jsonPrint.ToJSON)
+
+          .Post;
+
+
+
+        if resp.StatusCode <> 200 then
+
+          raise Exception.Create(
+
+            'Erro ao enviar para impressora: ' + resp.Content);
+
+
+
+      finally
+
+        jsonPrint.Free;
+
+      end;
+
+    end;
+
+
+
+  finally
+
+    jsonObj.Free;
+
+  end;
+
+end; 
