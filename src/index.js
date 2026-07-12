@@ -583,6 +583,31 @@ app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, re
     });
 });
 
+app.put("/pedidos/atualizar_valor_total/:id_pedido", token.ValidateJWT, function (request, response) {
+    const idPedido = request.params.id_pedido;
+
+    // A subquery soma os itens e o UPDATE soma a entrega
+    const ssql = `
+        UPDATE pedido 
+        SET vl_total = (
+            SELECT COALESCE(SUM(vl_total), 0) + vl_entrega 
+            FROM pedido_itens 
+            WHERE id_pedido = ?
+        ) 
+        WHERE id_pedido = ?`;
+
+    db.query(ssql, [idPedido, idPedido], function (err, result) {
+        if (err) {
+            console.error("Erro ao atualizar valor total:", err);
+            return response.status(500).send(err);
+        }
+        return response.status(200).json({ 
+            message: "Valor total atualizado com sucesso", 
+            id_pedido: idPedido 
+        });
+    });
+});
+
 // Endpoint para validar a existência do pedido antes de processar a notificação
 app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
     const id_pedido = req.params.id_pedido;
