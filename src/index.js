@@ -522,6 +522,67 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
     });
 });
 
+// Rota para buscar pedido completo (cabeçalho + itens)
+app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, response) {
+    const id_estabelecimento = request.id_estabelecimento;
+    const id_pedido = request.params.id_pedido;
+
+    // 1. Busca os dados do cabeçalho do pedido
+    const sqlPedido = `
+        SELECT 
+            p.id_pedido,
+            DATE_FORMAT(p.dt_pedido, '%Y-%m-%d %H:%i:%s') as dt_pedido,
+            p.status,
+            p.nome_cliente,
+            p.vl_entrega,
+            p.dinheiro,
+            p.troco,
+            p.vl_total,
+            p.observacao,
+            u.nome AS nome_login,
+            p.endereco_entrega,
+            p.rota
+        FROM pedido p
+        LEFT JOIN usuario u ON u.id_usuario = p.id_usuario
+        WHERE p.id_pedido = ? AND p.id_estabelecimento = ?
+    `;
+
+    // 2. Busca os itens do pedido
+    const sqlItens = `
+        SELECT 
+            i.id_pedido,
+            i.id_item,
+            prod.nome AS nome_produto,
+            p.nome_cliente,
+            prod.url_foto,
+            i.observacao,
+            p.forma_pagamento,
+            i.qtd,
+            i.vl_unitario,
+            i.vl_total,
+            p.numero_mesa,
+            p.numero_pessoas
+        FROM pedido_item i
+        JOIN pedido p ON i.id_pedido = p.id_pedido
+        JOIN produto prod ON i.id_produto = prod.id_produto
+        WHERE i.id_pedido = ? AND p.id_estabelecimento = ?
+    `;
+
+    db.query(sqlPedido, [id_pedido, id_estabelecimento], (err, resPedido) => {
+        if (err) return response.status(500).json({ error: err.message });
+        if (resPedido.length === 0) return response.status(404).json({ error: "Pedido não encontrado" });
+
+        db.query(sqlItens, [id_pedido, id_estabelecimento], (err, resItens) => {
+            if (err) return response.status(500).json({ error: err.message });
+            
+            return response.status(200).json({
+                pedido: resPedido[0],
+                itens: resItens
+            });
+        });
+    });
+});
+
 // Endpoint para validar a existência do pedido antes de processar a notificação
 app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
     const id_pedido = req.params.id_pedido;
