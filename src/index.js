@@ -586,12 +586,12 @@ app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, re
 app.put("/pedidos/atualizar_valor_total/:id_pedido", token.ValidateJWT, function (request, response) {
     const idPedido = request.params.id_pedido;
 
-    // A subquery soma os itens e o UPDATE soma a entrega
+    // Ajustado de "pedido_itens" para "pedido_item" conforme sua estrutura
     const ssql = `
         UPDATE pedido 
         SET vl_total = (
             SELECT COALESCE(SUM(vl_total), 0) + vl_entrega 
-            FROM pedido_itens 
+            FROM pedido_item 
             WHERE id_pedido = ?
         ) 
         WHERE id_pedido = ?`;
