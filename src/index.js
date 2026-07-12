@@ -522,50 +522,49 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
     });
 });
 
-// Rota para buscar pedido completo (cabeçalho + itens)
 app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, response) {
     const id_estabelecimento = request.id_estabelecimento;
     const id_pedido = request.params.id_pedido;
 
-    // 1. Busca os dados do cabeçalho do pedido
+    // 1. Cabeçalho do Pedido (Mesmos campos do /resumo)
     const sqlPedido = `
         SELECT 
             p.id_pedido,
-            DATE_FORMAT(p.dt_pedido, '%Y-%m-%d %H:%i:%s') as dt_pedido,
+            DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i:%s') AS dt_pedido,
             p.status,
             p.nome_cliente,
+            p.observacao,
+            p.forma_pagamento,
             p.vl_entrega,
             p.dinheiro,
             p.troco,
-            p.vl_total,
-            p.observacao,
-            u.nome AS nome_login,
+            p.local_consumo,
             p.endereco_entrega,
-            p.rota
+            u.nome AS nome_login,
+            p.rota,
+            p.vl_total
         FROM pedido p
         LEFT JOIN usuario u ON u.id_usuario = p.id_usuario
         WHERE p.id_pedido = ? AND p.id_estabelecimento = ?
     `;
 
-    // 2. Busca os itens do pedido
-    // atualizando o git
+    // 2. Itens do Pedido (Mesmos campos do /itens_lista)
     const sqlItens = `
         SELECT 
-            i.id_pedido,
-            i.id_item,
-            prod.nome AS nome_produto,
+            p.id_pedido,
+            p.numero_mesa,
             p.nome_cliente,
-            prod.url_foto,
-            i.observacao,
-            p.forma_pagamento,
+            p.numero_pessoas,
+            i.id_item,
+            o.nome AS nome_produto,
+            o.url_foto,
             i.qtd,
             i.vl_unitario,
             i.vl_total,
-            p.numero_mesa,
-            p.numero_pessoas
+            i.observacao
         FROM pedido_item i
         JOIN pedido p ON i.id_pedido = p.id_pedido
-        JOIN produto prod ON i.id_produto = prod.id_produto
+        JOIN produto o ON o.id_produto = i.id_produto
         WHERE i.id_pedido = ? AND p.id_estabelecimento = ?
     `;
 
