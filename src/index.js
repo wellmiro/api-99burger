@@ -548,6 +548,7 @@ app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, re
     `;
 
     // 2. Busca os itens do pedido
+    // atualizando o git
     const sqlItens = `
         SELECT 
             i.id_pedido,
