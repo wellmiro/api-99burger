@@ -552,16 +552,18 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
 });
 
 // 1. Ver os ingredientes (ficha técnica) de um produto específico
-app.get('/produtos/:id_produto/ficha', (req, res) => {
+app.get('/produtos/:id_produto/ficha', token.ValidateJWT, (req, res) => {
   const { id_produto } = req.params;
-const sql = `
-  SELECT T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida 
-  FROM produto_ficha_tecnica T
-  JOIN insumo I ON T.id_insumo = I.id_insumo
-  WHERE T.id_produto = ?
-`;
+  const id_estabelecimento = req.id_estabelecimento;
+  const sql = `
+    SELECT T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida 
+    FROM produto_ficha_tecnica T
+    JOIN insumo I ON T.id_insumo = I.id_insumo
+    JOIN produto P ON P.id_produto = T.id_produto
+    WHERE T.id_produto = ? AND P.id_estabelecimento = ?
+  `;
   
-  db.query(sql, [id_produto], (err, results) => {
+  db.query(sql, [id_produto, id_estabelecimento], (err, results) => {
     if (err) {
       console.error("Erro ao buscar ficha técnica:", err);
       return res.status(500).json({ erro: "Erro ao buscar ficha técnica" });
@@ -571,32 +573,61 @@ const sql = `
 });
 
 // 2. Adicionar um insumo na receita de um produto (Ex: X-Salada leva 100g de Frango)
-app.post('/produtos/ficha', (req, res) => {
+app.post('/produtos/ficha', token.ValidateJWT, (req, res) => {
+  const id_estabelecimento = req.id_estabelecimento;
   const { id_produto, id_insumo, qtd_consumida } = req.body;
-  
-  const sql = `
-    INSERT INTO produto_ficha_tecnica (id_produto, id_insumo, qtd_consumida) 
-    VALUES (?, ?, ?)
+
+  if (!id_produto || !id_insumo || qtd_consumida == null || isNaN(parseFloat(qtd_consumida)) || parseFloat(qtd_consumida) <= 0) {
+    return res.status(400).json({ erro: "Informe produto, insumo e uma quantidade consumida válida (maior que zero)" });
+  }
+
+  // Confere se o produto E o insumo pertencem a esse estabelecimento antes de vincular
+  const sqlChecagem = `
+    SELECT
+      (SELECT COUNT(*) FROM produto WHERE id_produto = ? AND id_estabelecimento = ?) AS produto_ok,
+      (SELECT COUNT(*) FROM insumo WHERE id_insumo = ? AND id_estabelecimento = ?) AS insumo_ok
   `;
-  
-  db.query(sql, [id_produto, id_insumo, qtd_consumida], (err, result) => {
-    if (err) {
-      console.error("Erro ao salvar item na ficha técnica:", err);
-      return res.status(500).json({ erro: "Erro ao salvar ficha técnica" });
+
+  db.query(sqlChecagem, [id_produto, id_estabelecimento, id_insumo, id_estabelecimento], (errCheck, resCheck) => {
+    if (errCheck) return res.status(500).json({ erro: "Erro ao validar produto/insumo" });
+    if (!resCheck[0].produto_ok || !resCheck[0].insumo_ok) {
+      return res.status(403).json({ erro: "Produto ou insumo não pertence a este estabelecimento" });
     }
-    res.json({ sucesso: true, mensagem: "Ingrediente vinculado ao produto com sucesso!" });
+
+    const sql = `
+      INSERT INTO produto_ficha_tecnica (id_produto, id_insumo, qtd_consumida) 
+      VALUES (?, ?, ?)
+    `;
+
+    db.query(sql, [id_produto, id_insumo, qtd_consumida], (err, result) => {
+      if (err) {
+        console.error("Erro ao salvar item na ficha técnica:", err);
+        return res.status(500).json({ erro: "Erro ao salvar ficha técnica" });
+      }
+      res.json({ sucesso: true, id_ficha: result.insertId, mensagem: "Ingrediente vinculado ao produto com sucesso!" });
+    });
   });
 });
 
 // 3. Remover um ingrediente da ficha técnica
-app.delete('/produtos/ficha/:id_ficha', (req, res) => {
+app.delete('/produtos/ficha/:id_ficha', token.ValidateJWT, (req, res) => {
   const { id_ficha } = req.params;
-  const sql = "DELETE FROM produto_ficha_tecnica WHERE id_ficha = ?";
+  const id_estabelecimento = req.id_estabelecimento;
+
+  // Só deleta se a ficha pertencer a um produto deste estabelecimento
+  const sql = `
+    DELETE T FROM produto_ficha_tecnica T
+    INNER JOIN produto P ON P.id_produto = T.id_produto
+    WHERE T.id_ficha = ? AND P.id_estabelecimento = ?
+  `;
   
-  db.query(sql, [id_ficha], (err, result) => {
+  db.query(sql, [id_ficha, id_estabelecimento], (err, result) => {
     if (err) {
       console.error("Erro ao remover item da ficha técnica:", err);
       return res.status(500).json({ erro: "Erro ao remover item" });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(403).json({ erro: "Item não encontrado ou permissão negada" });
     }
     res.json({ sucesso: true, mensagem: "Ingrediente removido da receita!" });
   });
@@ -663,9 +694,9 @@ app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, re
     });
 });
 
-// 1. Listar todos os insumos de um estabelecimento
-app.get('/insumos/:id_estabelecimento', (req, res) => {
-  const { id_estabelecimento } = req.params;
+// 1. Listar todos os insumos do estabelecimento logado
+app.get('/insumos', token.ValidateJWT, (req, res) => {
+  const id_estabelecimento = req.id_estabelecimento;
   const sql = "SELECT * FROM insumo WHERE id_estabelecimento = ? ORDER BY nome ASC";
   
   db.query(sql, [id_estabelecimento], (err, results) => {
@@ -678,15 +709,23 @@ app.get('/insumos/:id_estabelecimento', (req, res) => {
 });
 
 // 2. Cadastrar um novo insumo (ex: Farinha de Trigo, Kg, etc.)
-app.post('/insumos', (req, res) => {
-  const { id_estabelecimento, nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario } = req.body;
+app.post('/insumos', token.ValidateJWT, (req, res) => {
+  const id_estabelecimento = req.id_estabelecimento;
+  const { nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario } = req.body;
+
+  if (!nome) {
+    return res.status(400).json({ erro: "O nome do insumo é obrigatório" });
+  }
+
+  const UNIDADES_VALIDAS = ["UN", "KG", "G", "L", "ML"];
+  const unidadeSegura = UNIDADES_VALIDAS.includes(unidade_medida) ? unidade_medida : "UN";
   
   const sql = `
     INSERT INTO insumo (id_estabelecimento, nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario) 
     VALUES (?, ?, ?, ?, ?, ?)
   `;
   
-  db.query(sql, [id_estabelecimento, nome, unidade_medida, qtd_atual || 0, qtd_minima || 0, custo_unitario || 0], (err, result) => {
+  db.query(sql, [id_estabelecimento, nome, unidadeSegura, qtd_atual || 0, qtd_minima || 0, custo_unitario || 0], (err, result) => {
     if (err) {
       console.error("Erro ao cadastrar insumo:", err);
       return res.status(500).json({ erro: "Erro ao cadastrar insumo" });
@@ -1907,7 +1946,8 @@ app.post('/pedidos/status/:id_pedido', token.ValidateJWT, async (req, res) => {
             SELECT i.id_insumo, i.qtd_consumida, pi.qtd AS qtd_item
             FROM pedido_item pi
             INNER JOIN produto_ficha_tecnica i ON i.id_produto = pi.id_produto
-            WHERE pi.id_pedido = ? AND pi.id_estabelecimento = ?
+            INNER JOIN pedido pe ON pe.id_pedido = pi.id_pedido
+            WHERE pi.id_pedido = ? AND pe.id_estabelecimento = ?
         `;
         const insumos = await executeQuery(sqlInsumos, [id_pedido, id_estabelecimento]);
 
@@ -1957,13 +1997,16 @@ app.put('/insumos/:id_insumo', token.ValidateJWT, (req, res) => {
   const id_estabelecimento = req.id_estabelecimento;
   const { nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario } = req.body;
 
+  const UNIDADES_VALIDAS = ["UN", "KG", "G", "L", "ML"];
+  const unidadeSegura = UNIDADES_VALIDAS.includes(unidade_medida) ? unidade_medida : "UN";
+
   const sql = `
     UPDATE insumo 
     SET nome = ?, unidade_medida = ?, qtd_atual = ?, qtd_minima = ?, custo_unitario = ?
     WHERE id_insumo = ? AND id_estabelecimento = ?
   `;
 
-  db.query(sql, [nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario, id_insumo, id_estabelecimento], (err, result) => {
+  db.query(sql, [nome, unidadeSegura, qtd_atual, qtd_minima, custo_unitario, id_insumo, id_estabelecimento], (err, result) => {
     if (err) {
       console.error("Erro ao atualizar insumo:", err);
       return res.status(500).json({ erro: "Erro ao atualizar insumo" });
