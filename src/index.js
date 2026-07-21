@@ -191,6 +191,7 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
             p.qtd,
             p.qtd_max,
             p.qtd_min,
+            p.unidade_medida,
             c.descricao AS categoria,
             c.id_categoria
         FROM produto p
@@ -212,9 +213,10 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
             descricao: p.descricao,
             url_foto: p.url_foto,
             preco: parseFloat(p.preco),
-            qtd: p.qtd,
-            qtd_max: p.qtd_max,
-            qtd_min: p.qtd_min,
+            qtd: Number(p.qtd),
+            qtd_max: Number(p.qtd_max),
+            qtd_min: Number(p.qtd_min),
+            unidade_medida: p.unidade_medida || "UN",
             categoria: p.categoria,
             id_categoria: p.id_categoria
         }));
@@ -237,6 +239,7 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
             p.qtd,
             p.qtd_max,
             p.qtd_min,
+            p.unidade_medida,
             c.descricao AS categoria,
             c.id_categoria
         FROM produto p
@@ -256,9 +259,10 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
                 descricao: p.descricao,
                 url_foto: p.url_foto,
                 preco: parseFloat(p.preco),
-                qtd: p.qtd,
-                qtd_max: p.qtd_max,
-                qtd_min: p.qtd_min,
+                qtd: Number(p.qtd),
+                qtd_max: Number(p.qtd_max),
+                qtd_min: Number(p.qtd_min),
+                unidade_medida: p.unidade_medida || "UN",
                 categoria: p.categoria,
                 id_categoria: p.id_categoria
             }));
@@ -273,7 +277,7 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
     const id_produto = req.params.id;
     const id_estabelecimento = req.id_estabelecimento; // Vem do Token decodificado
     
-    let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria } = req.body;
+    let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, unidade_medida } = req.body;
 
     // Garantir que preco >= 0
     preco = preco != null ? Math.max(0, parseFloat(preco)) : 0;
@@ -283,10 +287,22 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
       return res.status(400).json({ error: "Campos obrigatórios: nome, preco, id_categoria" });
     }
 
-    // Conversão segura
-    qtd = qtd != null ? parseInt(qtd) : 0;
-    qtd_max = qtd_max != null ? parseInt(qtd_max) : 0;
-    qtd_min = qtd_min != null ? parseInt(qtd_min) : 0;
+    // Unidade de medida: UN (padrão) ou fracionada (KG, G, L, ML)
+    const UNIDADES_VALIDAS = ["UN", "KG", "G", "L", "ML"];
+    unidade_medida = UNIDADES_VALIDAS.includes(unidade_medida) ? unidade_medida : "UN";
+    const ehFracionado = unidade_medida !== "UN";
+
+    // Conversão segura: UN aceita apenas inteiro, unidades fracionadas aceitam até 3 casas decimais
+    const parseQtd = (valor, fallback) => {
+      if (valor == null || valor === "") return fallback;
+      const num = ehFracionado ? parseFloat(valor) : parseInt(valor, 10);
+      if (isNaN(num) || num < 0) return fallback;
+      return ehFracionado ? Number(num.toFixed(3)) : num;
+    };
+
+    qtd = parseQtd(qtd, 0);
+    qtd_max = parseQtd(qtd_max, 0);
+    qtd_min = parseQtd(qtd_min, 0);
     descricao = descricao || "";
     url_foto = url_foto || "";
 
@@ -301,11 +317,12 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
         qtd = ?,
         qtd_max = ?,
         qtd_min = ?,
-        id_categoria = ?
+        id_categoria = ?,
+        unidade_medida = ?
       WHERE id_produto = ? AND id_estabelecimento = ?
     `;
 
-    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_produto, id_estabelecimento];
+    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, unidade_medida, id_produto, id_estabelecimento];
 
     db.query(ssql, params, function (err, result) {
       if (err) {
@@ -326,7 +343,7 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
   // Endpoint para cadastrar produto
   app.post("/produtos", token.ValidateJWT, function (req, res) {
     const id_estabelecimento = req.id_estabelecimento; // Vem do Token decodificado
-    let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria } = req.body;
+    let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, unidade_medida } = req.body;
 
     // Correção: parseFloat (tinha um erro de digitação no seu)
     preco = preco != null ? Math.max(0, parseFloat(preco)) : 0;
@@ -335,20 +352,32 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
         return res.status(400).json({ error: "Campos obrigatórios: nome, preco, id_categoria" });
     }
 
-    // Conversão segura e tratamento de nulos
-    qtd = qtd != null ? parseInt(qtd) : 0;
-    qtd_max = qtd_max != null ? parseInt(qtd_max) : 20; // Valor padrão se vier vazio
-    qtd_min = qtd_min != null ? parseInt(qtd_min) : 0;
+    // Unidade de medida: UN (padrão) ou fracionada (KG, G, L, ML)
+    const UNIDADES_VALIDAS = ["UN", "KG", "G", "L", "ML"];
+    unidade_medida = UNIDADES_VALIDAS.includes(unidade_medida) ? unidade_medida : "UN";
+    const ehFracionado = unidade_medida !== "UN";
+
+    // Conversão segura: UN aceita apenas inteiro, unidades fracionadas aceitam até 3 casas decimais
+    const parseQtd = (valor, fallback) => {
+      if (valor == null || valor === "") return fallback;
+      const num = ehFracionado ? parseFloat(valor) : parseInt(valor, 10);
+      if (isNaN(num) || num < 0) return fallback;
+      return ehFracionado ? Number(num.toFixed(3)) : num;
+    };
+
+    qtd = parseQtd(qtd, 0);
+    qtd_max = parseQtd(qtd_max, 20); // Valor padrão se vier vazio
+    qtd_min = parseQtd(qtd_min, 0);
     descricao = descricao || "";
     url_foto = url_foto || "";
 
     const ssql = `
         INSERT INTO produto 
-            (nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_estabelecimento)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            (nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_estabelecimento, unidade_medida)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `;
 
-    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_estabelecimento];
+    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_estabelecimento, unidade_medida];
 
     db.query(ssql, params, function (err, result) {
         if (err) {
@@ -525,12 +554,12 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
 // 1. Ver os ingredientes (ficha técnica) de um produto específico
 app.get('/produtos/:id_produto/ficha', (req, res) => {
   const { id_produto } = req.params;
-  const sql = `
-    T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida 
-    FROM produto_ficha_tecnica T
-    JOIN insumo I ON T.id_insumo = I.id_insumo
-    WHERE T.id_produto = ?
-  `;
+const sql = `
+  SELECT T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida 
+  FROM produto_ficha_tecnica T
+  JOIN insumo I ON T.id_insumo = I.id_insumo
+  WHERE T.id_produto = ?
+`;
   
   db.query(sql, [id_produto], (err, results) => {
     if (err) {
@@ -665,6 +694,8 @@ app.post('/insumos', (req, res) => {
     res.json({ sucesso: true, id_insumo: result.insertId, mensagem: "Insumo cadastrado com sucesso!" });
   });
 });
+
+
 
 app.put("/pedidos/atualizar_valor_total/:id_pedido", token.ValidateJWT, function (request, response) {
     const idPedido = request.params.id_pedido;
@@ -1852,54 +1883,114 @@ app.post('/pedidos/publico', async (req, res) => {
 });
 
 
-app.put("/pedidos/status/:id_pedido", token.ValidateJWT, (req, res) => {
-  const id_pedido = req.params.id_pedido;
-  const novoStatus = req.body.status; // ex: "F" (Finalizado), "P" (Produção), etc.
+app.post('/pedidos/status/:id_pedido', token.ValidateJWT, async (req, res) => {
+    const { id_pedido } = req.params;
+    const { status } = req.body; // ex: 'F' para Finalizado
+    const id_estabelecimento = req.id_estabelecimento;
 
-  if (!novoStatus) {
-    return res.status(400).json({ erro: "É necessário informar o novo status" });
-  }
-
-  // Atualiza o status do pedido
-  const sqlAtualizaStatus = "UPDATE pedido SET status = ? WHERE id_pedido = ?";
-  db.query(sqlAtualizaStatus, [novoStatus, id_pedido], (err, result) => {
-    if (err) {
-      console.error("Erro ao atualizar status:", err);
-      return res.status(500).json({ erro: "Falha ao atualizar status", fatal: true });
+    // Se não for status de finalização, apenas atualiza o status sem mexer no estoque
+    if (status !== 'F') {
+        const sql = "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?";
+        return db.query(sql, [status, id_pedido, id_estabelecimento], (err, result) => {
+            if (err) return res.status(500).json({ error: err.message });
+            return res.json({ message: "Status atualizado com sucesso!" });
+        });
     }
 
-    if (result.affectedRows === 0) {
-      return res.status(404).json({ erro: "Pedido não encontrado" });
-    }
+    // Caso seja Finalização ('F'), faz a baixa do estoque com Transação
+    try {
+        // 1. Inicia a transação no banco
+        await executeQuery("START TRANSACTION");
 
-    // Se o status for finalizado ("F"), baixa o estoque
-    if (novoStatus === "F") {
-      const sqlItens = "SELECT id_produto, qtd as quantidade FROM pedido_item WHERE id_pedido = ?";
-      db.query(sqlItens, [id_pedido], (err2, itens) => {
-        if (err2) {
-          console.error("Erro ao buscar itens do pedido:", err2);
-          return res.status(500).json({ erro: "Falha ao processar itens do pedido", fatal: true });
+        // 2. Busca os itens do pedido e seus respectivos insumos/ficha técnica
+        const sqlInsumos = `
+            SELECT i.id_insumo, i.qtd_consumida, pi.qtd AS qtd_item
+            FROM pedido_item pi
+            INNER JOIN produto_ficha_tecnica i ON i.id_produto = pi.id_produto
+            WHERE pi.id_pedido = ? AND pi.id_estabelecimento = ?
+        `;
+        const insumos = await executeQuery(sqlInsumos, [id_pedido, id_estabelecimento]);
+
+        // 3. Atualiza o estoque de cada insumo sequencialmente
+        for (const insumo of insumos) {
+            const totalConsumido = insumo.qtd_item * insumo.qtd_consumida;
+            const sqlBaixa = `
+                UPDATE insumo 
+                SET qtd_atual = qtd_atual - ? 
+                WHERE id_insumo = ? AND id_estabelecimento = ?
+            `;
+            await executeQuery(sqlBaixa, [totalConsumido, insumo.id_insumo, id_estabelecimento]);
         }
 
-        itens.forEach(item => {
-          // Atualiza estoque do produto (usando GREATEST para não ficar negativo)
-          const sqlAtualizaProduto = `
-            UPDATE produto
-            SET qtd = GREATEST(qtd - ?, 0)
-            WHERE id_produto = ?
-          `;
-          db.query(sqlAtualizaProduto, [item.quantidade, item.id_produto], (err3, result3) => {
-            if (err3) {
-              console.error("Erro ao atualizar estoque do produto:", err3);
-            }
-          });
-        });
+        // 4. Atualiza o status do pedido para 'F'
+        const sqlStatus = "UPDATE pedido SET status = 'F' WHERE id_pedido = ? AND id_estabelecimento = ?";
+        await executeQuery(sqlStatus, [id_pedido, id_estabelecimento]);
 
-        res.json({ sucesso: true, mensagem: "Status atualizado e estoque ajustado", id_pedido });
-      });
-    } else {
-      res.json({ sucesso: true, mensagem: "Status atualizado com sucesso", id_pedido });
+        // 5. Confirma todas as alterações no banco de uma vez
+        await executeQuery("COMMIT");
+
+        return res.json({ message: "Pedido finalizado e estoque atualizado com sucesso!" });
+
+    } catch (error) {
+        // Se qualquer query falhar, desfaz TUDO que foi feito acima
+        await executeQuery("ROLLBACK");
+        console.error("Erro ao dar baixa no estoque:", error);
+        return res.status(500).json({ error: "Falha ao finalizar pedido e atualizar estoque." });
     }
+});
+
+// Helper simples para transformar o db.query (callback) em Promise
+function executeQuery(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.query(sql, params, (err, results) => {
+            if (err) return reject(err);
+            resolve(results);
+        });
+    });
+}
+
+// --- NOVAS ROTAS DE INSUMOS ---
+
+// Atualizar um Insumo existente (quantidade, preço, etc.)
+app.put('/insumos/:id_insumo', token.ValidateJWT, (req, res) => {
+  const { id_insumo } = req.params;
+  const id_estabelecimento = req.id_estabelecimento;
+  const { nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario } = req.body;
+
+  const sql = `
+    UPDATE insumo 
+    SET nome = ?, unidade_medida = ?, qtd_atual = ?, qtd_minima = ?, custo_unitario = ?
+    WHERE id_insumo = ? AND id_estabelecimento = ?
+  `;
+
+  db.query(sql, [nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario, id_insumo, id_estabelecimento], (err, result) => {
+    if (err) {
+      console.error("Erro ao atualizar insumo:", err);
+      return res.status(500).json({ erro: "Erro ao atualizar insumo" });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(403).json({ erro: "Insumo não encontrado ou permissão negada" });
+    }
+    res.json({ sucesso: true, mensagem: "Insumo atualizado com sucesso!" });
+  });
+});
+
+// Deletar um Insumo
+app.delete('/insumos/:id_insumo', token.ValidateJWT, (req, res) => {
+  const { id_insumo } = req.params;
+  const id_estabelecimento = req.id_estabelecimento;
+
+  const sql = "DELETE FROM insumo WHERE id_insumo = ? AND id_estabelecimento = ?";
+
+  db.query(sql, [id_insumo, id_estabelecimento], (err, result) => {
+    if (err) {
+      console.error("Erro ao deletar insumo:", err);
+      return res.status(500).json({ erro: "Erro ao deletar insumo. Verifique se ele está vinculado a algum produto." });
+    }
+    if (result.affectedRows === 0) {
+      return res.status(403).json({ erro: "Insumo não encontrado ou permissão negada" });
+    }
+    res.json({ sucesso: true, mensagem: "Insumo removido com sucesso!" });
   });
 });
 
