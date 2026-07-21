@@ -522,6 +522,57 @@ app.post("/produtos/opcoes/itens", token.ValidateJWT, function (req, res) {
     });
 });
 
+// 1. Ver os ingredientes (ficha técnica) de um produto específico
+app.get('/produtos/:id_produto/ficha', (req, res) => {
+  const { id_produto } = req.params;
+  const sql = `
+    T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida 
+    FROM produto_ficha_tecnica T
+    JOIN insumo I ON T.id_insumo = I.id_insumo
+    WHERE T.id_produto = ?
+  `;
+  
+  db.query(sql, [id_produto], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar ficha técnica:", err);
+      return res.status(500).json({ erro: "Erro ao buscar ficha técnica" });
+    }
+    res.json(results);
+  });
+});
+
+// 2. Adicionar um insumo na receita de um produto (Ex: X-Salada leva 100g de Frango)
+app.post('/produtos/ficha', (req, res) => {
+  const { id_produto, id_insumo, qtd_consumida } = req.body;
+  
+  const sql = `
+    INSERT INTO produto_ficha_tecnica (id_produto, id_insumo, qtd_consumida) 
+    VALUES (?, ?, ?)
+  `;
+  
+  db.query(sql, [id_produto, id_insumo, qtd_consumida], (err, result) => {
+    if (err) {
+      console.error("Erro ao salvar item na ficha técnica:", err);
+      return res.status(500).json({ erro: "Erro ao salvar ficha técnica" });
+    }
+    res.json({ sucesso: true, mensagem: "Ingrediente vinculado ao produto com sucesso!" });
+  });
+});
+
+// 3. Remover um ingrediente da ficha técnica
+app.delete('/produtos/ficha/:id_ficha', (req, res) => {
+  const { id_ficha } = req.params;
+  const sql = "DELETE FROM produto_ficha_tecnica WHERE id_ficha = ?";
+  
+  db.query(sql, [id_ficha], (err, result) => {
+    if (err) {
+      console.error("Erro ao remover item da ficha técnica:", err);
+      return res.status(500).json({ erro: "Erro ao remover item" });
+    }
+    res.json({ sucesso: true, mensagem: "Ingrediente removido da receita!" });
+  });
+});
+
 app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, response) {
     const id_estabelecimento = request.id_estabelecimento;
     const id_pedido = request.params.id_pedido;
@@ -581,6 +632,38 @@ app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, re
             });
         });
     });
+});
+
+// 1. Listar todos os insumos de um estabelecimento
+app.get('/insumos/:id_estabelecimento', (req, res) => {
+  const { id_estabelecimento } = req.params;
+  const sql = "SELECT * FROM insumo WHERE id_estabelecimento = ? ORDER BY nome ASC";
+  
+  db.query(sql, [id_estabelecimento], (err, results) => {
+    if (err) {
+      console.error("Erro ao buscar insumos:", err);
+      return res.status(500).json({ erro: "Erro ao buscar insumos" });
+    }
+    res.json(results);
+  });
+});
+
+// 2. Cadastrar um novo insumo (ex: Farinha de Trigo, Kg, etc.)
+app.post('/insumos', (req, res) => {
+  const { id_estabelecimento, nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario } = req.body;
+  
+  const sql = `
+    INSERT INTO insumo (id_estabelecimento, nome, unidade_medida, qtd_atual, qtd_minima, custo_unitario) 
+    VALUES (?, ?, ?, ?, ?, ?)
+  `;
+  
+  db.query(sql, [id_estabelecimento, nome, unidade_medida, qtd_atual || 0, qtd_minima || 0, custo_unitario || 0], (err, result) => {
+    if (err) {
+      console.error("Erro ao cadastrar insumo:", err);
+      return res.status(500).json({ erro: "Erro ao cadastrar insumo" });
+    }
+    res.json({ sucesso: true, id_insumo: result.insertId, mensagem: "Insumo cadastrado com sucesso!" });
+  });
 });
 
 app.put("/pedidos/atualizar_valor_total/:id_pedido", token.ValidateJWT, function (request, response) {
@@ -854,7 +937,7 @@ app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
         sql = `UPDATE usuario SET nome=?, email=?, senha=?, tipo=? 
                WHERE id_usuario = ? AND id_estabelecimento = ?`;
         params = [nome, email, tipo, senha, id, id_estabelecimento];
-    end } else {
+    } else {
         // Se a senha for vazia, o SQL NÃO possui o campo senha. 
         // Assim, a senha antiga continua lá bonitinha.
         sql = `UPDATE usuario SET nome=?, email=?, tipo=? 
