@@ -1990,6 +1990,37 @@ function executeQuery(sql, params = []) {
     });
 }
 
+app.put('/produtos/ficha/:id_ficha', token.ValidateJWT, (req, res) => {
+  const { id_ficha } = req.params;
+  const id_estabelecimento = req.id_estabelecimento;
+  const { qtd_consumida } = req.body;
+
+  if (qtd_consumida == null || isNaN(parseFloat(qtd_consumida)) || parseFloat(qtd_consumida) <= 0) {
+    return res.status(400).json({ erro: "Informe uma quantidade consumida válida (maior que zero)" });
+  }
+
+  // Trava de segurança: só atualiza se a ficha pertencer a um produto do estabelecimento logado
+  const sql = `
+    UPDATE produto_ficha_tecnica T
+    INNER JOIN produto P ON P.id_produto = T.id_produto
+    SET T.qtd_consumida = ?
+    WHERE T.id_ficha = ? AND P.id_estabelecimento = ?
+  `;
+
+  db.query(sql, [qtd_consumida, id_ficha, id_estabelecimento], (err, result) => {
+    if (err) {
+      console.error("Erro ao atualizar ficha técnica:", err);
+      return res.status(500).json({ erro: "Erro ao atualizar ficha técnica" });
+    }
+
+    if (result.affectedRows === 0) {
+      return res.status(403).json({ erro: "Item não encontrado ou permissão negada" });
+    }
+
+    res.json({ sucesso: true, mensagem: "Quantidade atualizada com sucesso!" });
+  });
+});
+
 // --- NOVAS ROTAS DE INSUMOS ---
 
 // Atualizar um Insumo existente (quantidade, preço, etc.)
@@ -2285,3 +2316,4 @@ app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
 });
 // v2 bugou kkk
+// v3
