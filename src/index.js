@@ -1922,64 +1922,65 @@ app.post('/pedidos/publico', async (req, res) => {
 });
 
 
-app.post('/pedidos/status/:id_pedido', token.ValidateJWT, async (req, res) => {
+// Função principal para atualizar o status do pedido
+const atualizarStatusPedido = async (req, res) => {
     const { id_pedido } = req.params;
-    const { status } = req.body; // ex: 'F' para Finalizado
+    let { status } = req.body;
     const id_estabelecimento = req.id_estabelecimento;
 
-    // Se não for status de finalização, apenas atualiza o status sem mexer no estoque
-    if (status !== 'F') {
-        const sql = "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?";
-        return db.query(sql, [status, id_pedido, id_estabelecimento], (err, result) => {
-            if (err) return res.status(500).json({ error: err.message });
-            return res.json({ message: "Status atualizado com sucesso!" });
-        });
+    if (!status) {
+        return res.status(400).json({ error: "O campo status é obrigatório." });
     }
 
-    // Caso seja Finalização ('F'), faz a baixa do estoque com Transação
+    status = status.toUpperCase();
+
     try {
-        // 1. Inicia a transação no banco
-        await executeQuery("START TRANSACTION");
+        // 1. Atualiza o status do pedido no banco de dados primeiro
+        const sqlStatus = "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?";
+        await executeQuery(sqlStatus, [status, id_pedido, id_estabelecimento]);
 
-        // 2. Busca os itens do pedido e seus respectivos insumos/ficha técnica
-        const sqlInsumos = `
-            SELECT i.id_insumo, i.qtd_consumida, pi.qtd AS qtd_item
-            FROM pedido_item pi
-            INNER JOIN produto_ficha_tecnica i ON i.id_produto = pi.id_produto
-            INNER JOIN pedido pe ON pe.id_pedido = pi.id_pedido
-            WHERE pi.id_pedido = ? AND pe.id_estabelecimento = ?
-        `;
-        const insumos = await executeQuery(sqlInsumos, [id_pedido, id_estabelecimento]);
+        // 2. Se for Finalizado ('F'), tenta dar baixa no estoque/insumos
+        if (status === 'F') {
+            try {
+                const sqlInsumos = `
+                    SELECT i.id_insumo, i.qtd_consumida, pi.qtd AS qtd_item
+                    FROM pedido_item pi
+                    INNER JOIN produto_ficha_tecnica i ON i.id_produto = pi.id_produto
+                    INNER JOIN pedido pe ON pe.id_pedido = pi.id_pedido
+                    WHERE pi.id_pedido = ? AND pe.id_estabelecimento = ?
+                `;
+                const insumos = await executeQuery(sqlInsumos, [id_pedido, id_estabelecimento]);
 
-        // 3. Atualiza o estoque de cada insumo sequencialmente
-        for (const insumo of insumos) {
-            const totalConsumido = insumo.qtd_item * insumo.qtd_consumida;
-            const sqlBaixa = `
-                UPDATE insumo 
-                SET qtd_atual = qtd_atual - ? 
-                WHERE id_insumo = ? AND id_estabelecimento = ?
-            `;
-            await executeQuery(sqlBaixa, [totalConsumido, insumo.id_insumo, id_estabelecimento]);
+                // Abate a quantidade de cada insumo cadastrado na ficha técnica
+                for (const insumo of insumos) {
+                    const totalConsumido = insumo.qtd_item * insumo.qtd_consumida;
+                    const sqlBaixa = `
+                        UPDATE insumo 
+                        SET qtd_atual = qtd_atual - ? 
+                        WHERE id_insumo = ? AND id_estabelecimento = ?
+                    `;
+                    await executeQuery(sqlBaixa, [totalConsumido, insumo.id_insumo, id_estabelecimento]);
+                }
+            } catch (stockError) {
+                // Se algum produto não tiver ficha técnica ou faltar tabela,
+                // grava apenas um aviso no console e NÃO trava a finalização do pedido.
+                console.warn("Aviso (Baixa de estoque ignorada):", stockError.message);
+            }
         }
 
-        // 4. Atualiza o status do pedido para 'F'
-        const sqlStatus = "UPDATE pedido SET status = 'F' WHERE id_pedido = ? AND id_estabelecimento = ?";
-        await executeQuery(sqlStatus, [id_pedido, id_estabelecimento]);
-
-        // 5. Confirma todas as alterações no banco de uma vez
-        await executeQuery("COMMIT");
-
-        return res.json({ message: "Pedido finalizado e estoque atualizado com sucesso!" });
+        return res.json({ message: "Status do pedido atualizado com sucesso!" });
 
     } catch (error) {
-        // Se qualquer query falhar, desfaz TUDO que foi feito acima
-        await executeQuery("ROLLBACK");
-        console.error("Erro ao dar baixa no estoque:", error);
-        return res.status(500).json({ error: "Falha ao finalizar pedido e atualizar estoque." });
+        console.error("Erro ao atualizar status do pedido:", error);
+        return res.status(500).json({ error: "Erro ao atualizar status do pedido." });
     }
-});
+};
 
-// Helper simples para transformar o db.query (callback) em Promise
+// Registra a rota para aceitar tanto POST quanto PUT (evita erro 404)
+app.post('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
+app.put('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
+
+// Helper para converter o db.query em Promise (async/await)
 function executeQuery(sql, params = []) {
     return new Promise((resolve, reject) => {
         db.query(sql, params, (err, results) => {
