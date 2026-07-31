@@ -1408,10 +1408,22 @@ app.post('/usuarios', (req, res) => {
       return res.status(400).json({ error: 'Campos obrigatórios faltando' });
     }
 
+    // Usamos JOIN para buscar dados do usuário e do estabelecimento ao mesmo tempo
     const sql = `
-      SELECT id_usuario, nome, email, tipo, status, dt_cadastro, id_estabelecimento
-      FROM usuario
-      WHERE email = ? AND senha = ?
+      SELECT 
+        u.id_usuario, 
+        u.nome, 
+        u.email, 
+        u.tipo, 
+        u.status, 
+        u.dt_cadastro, 
+        u.id_estabelecimento,
+        e.nome_estabelecimento,
+        e.url_logo,
+        e.qtd_mesas
+      FROM usuario u
+      LEFT JOIN estabelecimento e ON e.id_estabelecimento = u.id_estabelecimento
+      WHERE u.email = ? AND u.senha = ?
       LIMIT 1
     `;
 
@@ -1427,20 +1439,20 @@ app.post('/usuarios', (req, res) => {
 
       const usuario = results[0];
 
-      // Criar token JWT
-      // É uma boa prática incluir o id_estabelecimento no payload do token!
+      // Criar token JWT (com a vírgula correta e os dados do estabelecimento)
       const token = jwt.sign(
         {
           id_usuario: usuario.id_usuario,
           nome: usuario.nome,
           tipo: usuario.tipo,
-          id_estabelecimento: usuario.id_estabelecimento // ⬅️ ADICIONADO AO JWT
+          id_estabelecimento: usuario.id_estabelecimento,
+          qtd_mesas: usuario.qtd_mesas
         },
         process.env.JWT_SECRET,
         { expiresIn: '1h' }
       );
 
-      // Retorno "flat"
+      // Retorno completo que vai bater lá no Delphi
       return res.status(200).json({
         id_usuario: usuario.id_usuario,
         nome: usuario.nome,
@@ -1448,7 +1460,10 @@ app.post('/usuarios', (req, res) => {
         tipo: usuario.tipo,
         status: usuario.status,
         dt_cadastro: usuario.dt_cadastro,
-        id_estabelecimento: usuario.id_estabelecimento, // ⬅️ ADICIONADO AO RETORNO JSON
+        id_estabelecimento: usuario.id_estabelecimento,
+        nome_estabelecimento: usuario.nome_estabelecimento,
+        url_logo: usuario.url_logo,
+        qtd_mesas: usuario.qtd_mesas, // ⬅️ AGORA VAI ENVIAR PRO DELPHI!
         token: token
       });
     });
