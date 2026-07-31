@@ -1470,7 +1470,7 @@ app.post('/usuarios', (req, res) => {
   }
 });
 
-// versao 3
+// versao 4
 
 
 // 1. Retorna todas as notificações ativas ('A') do estabelecimento logado
