@@ -1302,26 +1302,8 @@ app.post('/usuarios', (req, res) => {
   app.post("/login", function (req, res) {
     const { email, senha } = req.body;
 
-    console.log("\n================ LOGIN ================");
-    console.log("Email recebido:", `"${email}"`);
-    console.log("Senha recebida:", `"${senha}"`);
-
     if (!email || !senha)
         return res.status(400).json({ error: "Email e senha obrigatórios" });
-
-    // Descobre em qual banco a API está conectada
-    db.query("SELECT DATABASE() AS banco", (err, banco) => {
-        if (!err) {
-            console.log("Banco:", banco[0].banco);
-        }
-    });
-
-    // Conta quantos usuários existem
-    db.query("SELECT COUNT(*) AS total FROM usuario", (err, total) => {
-        if (!err) {
-            console.log("Total de usuários:", total[0].total);
-        }
-    });
 
     const ssql = `
         SELECT
@@ -1337,7 +1319,7 @@ app.post('/usuarios', (req, res) => {
             e.logo AS url_logo,
             e.qtd_mesas
         FROM usuario u
-        INNER JOIN estabelecimento e
+        LEFT JOIN estabelecimento e
             ON e.id_estabelecimento = u.id_estabelecimento
         WHERE u.email = ?
     `;
@@ -1345,26 +1327,21 @@ app.post('/usuarios', (req, res) => {
     db.query(ssql, [email], function (err, result) {
 
         if (err) {
-            console.error("Erro SQL:", err);
+            console.error("Erro SQL /login:", err);
             return res.status(500).json({ error: "Erro no banco" });
         }
-
-        console.log("Resultado da consulta:", result.length);
 
         if (result.length > 0) {
 
             const usuario = result[0];
 
-            console.log("Usuário encontrado:");
-            console.log(usuario);
-
             if (senha === usuario.senha) {
-
-                console.log("Senha correta.");
 
                 const token = jwt.sign(
                     {
                         id_usuario: usuario.id_usuario,
+                        nome: usuario.nome,
+                        tipo: usuario.tipo,
                         id_estabelecimento: usuario.id_estabelecimento,
                         qtd_mesas: usuario.qtd_mesas
                     },
@@ -1388,8 +1365,6 @@ app.post('/usuarios', (req, res) => {
 
             } else {
 
-                console.log("Senha incorreta.");
-
                 return res.status(401).json({
                     error: "Senha incorreta"
                 });
@@ -1397,14 +1372,14 @@ app.post('/usuarios', (req, res) => {
 
         } else {
 
-            console.log("Usuário NÃO encontrado para:", email);
-
             return res.status(404).json({
                 error: "Usuário não encontrado"
             });
         }
     });
 });
+
+// versao 2
 
 
 // 1. Retorna todas as notificações ativas ('A') do estabelecimento logado
