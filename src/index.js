@@ -1473,6 +1473,8 @@ app.post('/usuarios', (req, res) => {
   }
 });
 
+//versao2
+
 
 // 1. Retorna todas as notificações ativas ('A') do estabelecimento logado
 app.get("/notificacoes", token.ValidateJWT, function (request, response) {
