@@ -1408,7 +1408,6 @@ app.post('/usuarios', (req, res) => {
       return res.status(400).json({ error: 'Campos obrigatórios faltando' });
     }
 
-    // Usamos JOIN para buscar dados do usuário e do estabelecimento ao mesmo tempo
     const sql = `
       SELECT 
         u.id_usuario, 
@@ -1418,8 +1417,8 @@ app.post('/usuarios', (req, res) => {
         u.status, 
         u.dt_cadastro, 
         u.id_estabelecimento,
-        e.nome_estabelecimento,
-        e.url_logo,
+        e.nome AS nome_estabelecimento,
+        e.logo AS url_logo,
         e.qtd_mesas
       FROM usuario u
       LEFT JOIN estabelecimento e ON e.id_estabelecimento = u.id_estabelecimento
@@ -1439,7 +1438,6 @@ app.post('/usuarios', (req, res) => {
 
       const usuario = results[0];
 
-      // Criar token JWT (com a vírgula correta e os dados do estabelecimento)
       const token = jwt.sign(
         {
           id_usuario: usuario.id_usuario,
@@ -1452,7 +1450,6 @@ app.post('/usuarios', (req, res) => {
         { expiresIn: '1h' }
       );
 
-      // Retorno completo que vai bater lá no Delphi
       return res.status(200).json({
         id_usuario: usuario.id_usuario,
         nome: usuario.nome,
@@ -1463,7 +1460,7 @@ app.post('/usuarios', (req, res) => {
         id_estabelecimento: usuario.id_estabelecimento,
         nome_estabelecimento: usuario.nome_estabelecimento,
         url_logo: usuario.url_logo,
-        qtd_mesas: usuario.qtd_mesas, // ⬅️ AGORA VAI ENVIAR PRO DELPHI!
+        qtd_mesas: usuario.qtd_mesas,
         token: token
       });
     });
@@ -1473,7 +1470,7 @@ app.post('/usuarios', (req, res) => {
   }
 });
 
-//versao2
+// versao 3
 
 
 // 1. Retorna todas as notificações ativas ('A') do estabelecimento logado
