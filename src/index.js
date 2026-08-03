@@ -33,40 +33,6 @@ app.get("/versao", function (req, res) {
 });
 
 
-
-app.post('/usuarios', token.ValidateJWT, (req, res) => {
-    const { nome, email, senha, tipo } = req.body;
-    const ssql = "INSERT INTO usuario (nome, email, senha, tipo, status) VALUES (?, ?, ?, ?, 'S')";
-    db.query(ssql, [nome, email, senha, tipo || 'A'], (err, result) => {
-        if (err) return res.status(500).json({ error: err.message });
-        return res.status(201).json({ id_usuario: result.insertId });
-    });
-});
-
-// Rota para consultar estoque em tempo real
-app.get('/produtos/estoque/:id', (req, res) => {
-    const idProduto = req.params.id;
-
-    // Correção: Alterado de 'produtos' para 'produto' 
-    // e de 'id' para 'id_produto' conforme o seu schema
-    const sql = 'SELECT qtd FROM produto WHERE id_produto = ?';
-
-    db.query(sql, [idProduto], (err, results) => {
-        if (err) {
-            console.error("Erro no SQL de estoque:", err);
-            return res.status(500).json({ error: "Erro ao consultar estoque" });
-        }
-
-        if (results.length > 0) {
-            // Retorna o objeto com a quantidade encontrada
-            res.json({ qtd: results[0].qtd });
-        } else {
-            // Se o produto não existir, retorna 404
-            res.status(404).json({ error: "Produto não encontrado" });
-        }
-    });
-});
-
   // Rotas
   // GET: listar produtos do cardápio com qtd_min e qtd_max
   // O id_estabelecimento vem 'carimbado' no token e o middleware joga no request
