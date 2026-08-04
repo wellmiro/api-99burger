@@ -33,6 +33,40 @@ app.get("/versao", function (req, res) {
 });
 
 
+
+app.post('/usuarios', token.ValidateJWT, (req, res) => {
+    const { nome, email, senha, tipo } = req.body;
+    const ssql = "INSERT INTO usuario (nome, email, senha, tipo, status) VALUES (?, ?, ?, ?, 'S')";
+    db.query(ssql, [nome, email, senha, tipo || 'A'], (err, result) => {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(201).json({ id_usuario: result.insertId });
+    });
+});
+
+// Rota para consultar estoque em tempo real
+app.get('/produtos/estoque/:id', (req, res) => {
+    const idProduto = req.params.id;
+
+    // Correção: Alterado de 'produtos' para 'produto' 
+    // e de 'id' para 'id_produto' conforme o seu schema
+    const sql = 'SELECT qtd FROM produto WHERE id_produto = ?';
+
+    db.query(sql, [idProduto], (err, results) => {
+        if (err) {
+            console.error("Erro no SQL de estoque:", err);
+            return res.status(500).json({ error: "Erro ao consultar estoque" });
+        }
+
+        if (results.length > 0) {
+            // Retorna o objeto com a quantidade encontrada
+            res.json({ qtd: results[0].qtd });
+        } else {
+            // Se o produto não existir, retorna 404
+            res.status(404).json({ error: "Produto não encontrado" });
+        }
+    });
+});
+
   // Rotas
   // GET: listar produtos do cardápio com qtd_min e qtd_max
   // O id_estabelecimento vem 'carimbado' no token e o middleware joga no request
@@ -105,7 +139,13 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
             p.qtd_min,
             p.unidade_medida,
             c.descricao AS categoria,
-            c.id_categoria
+            c.id_categoria,
+            (
+                SELECT COALESCE(SUM(pft.qtd_consumida * i.custo_unitario), 0)
+                FROM produto_ficha_tecnica pft
+                JOIN insumo i ON i.id_insumo = pft.id_insumo
+                WHERE pft.id_produto = p.id_produto
+            ) AS custo_total
         FROM produto p
         JOIN produto_categoria c ON c.id_categoria = p.id_categoria
         WHERE p.id_estabelecimento = ?
@@ -128,7 +168,8 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
                 qtd_min: Number(p.qtd_min),
                 unidade_medida: p.unidade_medida || "UN",
                 categoria: p.categoria,
-                id_categoria: p.id_categoria
+                id_categoria: p.id_categoria,
+                custo_total: parseFloat(p.custo_total) || 0
             }));
             return response.status(200).json(produtos);
         }
@@ -420,7 +461,7 @@ app.get('/produtos/:id_produto/ficha', token.ValidateJWT, (req, res) => {
   const { id_produto } = req.params;
   const id_estabelecimento = req.id_estabelecimento;
   const sql = `
-    SELECT T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida 
+    SELECT T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida, I.custo_unitario
     FROM produto_ficha_tecnica T
     JOIN insumo I ON T.id_insumo = I.id_insumo
     JOIN produto P ON P.id_produto = T.id_produto
@@ -2243,4 +2284,3 @@ app.listen(port, () => {
 });
 // v2 bugou kkk
 // v3
-// v4
