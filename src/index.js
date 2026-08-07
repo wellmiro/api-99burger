@@ -1869,12 +1869,13 @@ const atualizarStatusPedido = async (req, res) => {
         const sqlStatus = "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?";
         await executeQuery(sqlStatus, [status, id_pedido, id_estabelecimento]);
 
-        // 2. Se for Finalizado ('F'), tenta dar baixa no estoque
-        //    Regra: produto com unidade_medida = 'UN' -> desconta direto de produto.qtd
-        //           produto com outra unidade (KG, G, L, ML) -> usa a ficha técnica (insumo)
+        // 2. Se for Finalizado ('F'), dá baixa no estoque
+        //    Regra: SEMPRE desconta o qtd do próprio produto vendido
+        //           E TAMBÉM desconta cada insumo vinculado na ficha técnica dele
+        //           (são controles de estoque separados, um não substitui o outro)
         if (status === 'F') {
             try {
-                // Busca cada item do pedido junto com a unidade de medida do produto
+                // Busca cada item do pedido
                 const sqlItens = `
                     SELECT pi.id_produto, pi.qtd AS qtd_item, p.unidade_medida
                     FROM pedido_item pi
@@ -1886,49 +1887,43 @@ const atualizarStatusPedido = async (req, res) => {
 
                 console.log(`[Baixa de estoque] Pedido ${id_pedido} (estab ${id_estabelecimento}): ${itens.length} item(ns) no pedido.`);
 
-                const itensUN = itens.filter(it => (it.unidade_medida || '').toUpperCase() === 'UN');
-                const itensFicha = itens.filter(it => (it.unidade_medida || '').toUpperCase() !== 'UN');
-
-                // 2a. Itens em UN: desconta direto do estoque do próprio produto
-                for (const item of itensUN) {
+                // 2a. Desconta o estoque do próprio produto vendido (ex: -1 no qtd do X-Frango)
+                for (const item of itens) {
                     const sqlBaixaProduto = `
                         UPDATE produto 
                         SET qtd = qtd - ? 
                         WHERE id_produto = ? AND id_estabelecimento = ?
                     `;
                     const result = await executeQuery(sqlBaixaProduto, [item.qtd_item, item.id_produto, id_estabelecimento]);
-                    console.log(`[Baixa de estoque] produto ${item.id_produto} (UN): -${item.qtd_item} (linhas afetadas: ${result.affectedRows})`);
+                    console.log(`[Baixa de estoque] produto ${item.id_produto}: -${item.qtd_item} (linhas afetadas: ${result.affectedRows})`);
                 }
 
-                // 2b. Itens em outra unidade: usa a ficha técnica (consumo de insumos)
-                if (itensFicha.length > 0) {
-                    const idsProdutosFicha = itensFicha.map(it => it.id_produto);
-                    const placeholders = idsProdutosFicha.map(() => '?').join(',');
-                    const sqlInsumos = `
-                        SELECT i.id_produto, i.id_insumo, i.qtd_consumida, pi.qtd AS qtd_item
-                        FROM pedido_item pi
-                        INNER JOIN produto_ficha_tecnica i ON i.id_produto = pi.id_produto
-                        INNER JOIN pedido pe ON pe.id_pedido = pi.id_pedido
-                        WHERE pi.id_pedido = ? AND pe.id_estabelecimento = ? AND pi.id_produto IN (${placeholders})
+                // 2b. Desconta cada insumo da ficha técnica dos produtos vendidos
+                //     (ex: X-Frango consome 0.1 KG de Frango Desfiado por venda)
+                const sqlInsumos = `
+                    SELECT i.id_produto, i.id_insumo, i.qtd_consumida, pi.qtd AS qtd_item
+                    FROM pedido_item pi
+                    INNER JOIN produto_ficha_tecnica i ON i.id_produto = pi.id_produto
+                    INNER JOIN pedido pe ON pe.id_pedido = pi.id_pedido
+                    WHERE pi.id_pedido = ? AND pe.id_estabelecimento = ?
+                `;
+                const insumos = await executeQuery(sqlInsumos, [id_pedido, id_estabelecimento]);
+
+                console.log(`[Baixa de estoque] ${insumos.length} insumo(s) encontrado(s) na ficha técnica do pedido.`);
+
+                if (insumos.length === 0) {
+                    console.warn(`[Baixa de estoque] Nenhum insumo vinculado aos produtos deste pedido. Verifique se os produtos possuem ficha técnica cadastrada (produto_ficha_tecnica) para id_estabelecimento=${id_estabelecimento}.`);
+                }
+
+                for (const insumo of insumos) {
+                    const totalConsumido = insumo.qtd_item * insumo.qtd_consumida;
+                    const sqlBaixaInsumo = `
+                        UPDATE insumo 
+                        SET qtd_atual = qtd_atual - ? 
+                        WHERE id_insumo = ? AND id_estabelecimento = ?
                     `;
-                    const insumos = await executeQuery(sqlInsumos, [id_pedido, id_estabelecimento, ...idsProdutosFicha]);
-
-                    console.log(`[Baixa de estoque] ${insumos.length} insumo(s) encontrado(s) na ficha técnica para os itens não-UN.`);
-
-                    if (insumos.length === 0) {
-                        console.warn(`[Baixa de estoque] Nenhum insumo vinculado. Verifique se os produtos com unidade diferente de UN possuem ficha técnica cadastrada (produto_ficha_tecnica) para id_estabelecimento=${id_estabelecimento}.`);
-                    }
-
-                    for (const insumo of insumos) {
-                        const totalConsumido = insumo.qtd_item * insumo.qtd_consumida;
-                        const sqlBaixaInsumo = `
-                            UPDATE insumo 
-                            SET qtd_atual = qtd_atual - ? 
-                            WHERE id_insumo = ? AND id_estabelecimento = ?
-                        `;
-                        const result = await executeQuery(sqlBaixaInsumo, [totalConsumido, insumo.id_insumo, id_estabelecimento]);
-                        console.log(`[Baixa de estoque] insumo ${insumo.id_insumo}: -${totalConsumido} (linhas afetadas: ${result.affectedRows})`);
-                    }
+                    const result = await executeQuery(sqlBaixaInsumo, [totalConsumido, insumo.id_insumo, id_estabelecimento]);
+                    console.log(`[Baixa de estoque] insumo ${insumo.id_insumo}: -${totalConsumido} (linhas afetadas: ${result.affectedRows})`);
                 }
             } catch (stockError) {
                 console.error("[Baixa de estoque] ERRO ao dar baixa:", stockError.message, stockError.stack);
