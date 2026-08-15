@@ -461,7 +461,7 @@ app.get('/produtos/:id_produto/ficha', token.ValidateJWT, (req, res) => {
   const { id_produto } = req.params;
   const id_estabelecimento = req.id_estabelecimento;
   const sql = `
-    SELECT T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida, I.custo_unitario
+    SELECT T.id_ficha, T.id_insumo, I.nome, I.unidade_medida, T.qtd_consumida, I.custo_unitario, I.qtd_atual
     FROM produto_ficha_tecnica T
     JOIN insumo I ON T.id_insumo = I.id_insumo
     JOIN produto P ON P.id_produto = T.id_produto
