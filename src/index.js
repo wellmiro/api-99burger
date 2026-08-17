@@ -478,40 +478,96 @@ app.get('/produtos/:id_produto/ficha', token.ValidateJWT, (req, res) => {
 });
 
 // 2. Adicionar um insumo na receita de um produto (Ex: X-Salada leva 100g de Frango)
-app.post('/produtos/ficha', token.ValidateJWT, (req, res) => {
-  const id_estabelecimento = req.id_estabelecimento;
-  const { id_produto, id_insumo, qtd_consumida } = req.body;
+app.post('/produtos/ficha', token.ValidateJWT, async (req, res) => {
+    const id_estabelecimento = req.id_estabelecimento;
 
-  if (!id_produto || !id_insumo || qtd_consumida == null || isNaN(parseFloat(qtd_consumida)) || parseFloat(qtd_consumida) <= 0) {
-    return res.status(400).json({ erro: "Informe produto, insumo e uma quantidade consumida válida (maior que zero)" });
-  }
+    const {
+        id_produto,
+        id_insumo,
+        qtd_consumida
+    } = req.body;
 
-  // Confere se o produto E o insumo pertencem a esse estabelecimento antes de vincular
-  const sqlChecagem = `
-    SELECT
-      (SELECT COUNT(*) FROM produto WHERE id_produto = ? AND id_estabelecimento = ?) AS produto_ok,
-      (SELECT COUNT(*) FROM insumo WHERE id_insumo = ? AND id_estabelecimento = ?) AS insumo_ok
-  `;
-
-  db.query(sqlChecagem, [id_produto, id_estabelecimento, id_insumo, id_estabelecimento], (errCheck, resCheck) => {
-    if (errCheck) return res.status(500).json({ erro: "Erro ao validar produto/insumo" });
-    if (!resCheck[0].produto_ok || !resCheck[0].insumo_ok) {
-      return res.status(403).json({ erro: "Produto ou insumo não pertence a este estabelecimento" });
+    if (
+        !id_produto ||
+        !id_insumo ||
+        qtd_consumida == null ||
+        isNaN(parseFloat(qtd_consumida)) ||
+        parseFloat(qtd_consumida) <= 0
+    ) {
+        return res.status(400).json({
+            erro: "Informe produto, insumo e uma quantidade consumida válida (maior que zero)"
+        });
     }
 
-    const sql = `
-      INSERT INTO produto_ficha_tecnica (id_produto, id_insumo, qtd_consumida) 
-      VALUES (?, ?, ?)
-    `;
+    try {
+        const sqlChecagem = `
+            SELECT
+                (
+                    SELECT COUNT(*)
+                    FROM produto
+                    WHERE id_produto = ?
+                      AND id_estabelecimento = ?
+                ) AS produto_ok,
 
-    db.query(sql, [id_produto, id_insumo, qtd_consumida], (err, result) => {
-      if (err) {
-        console.error("Erro ao salvar item na ficha técnica:", err);
-        return res.status(500).json({ erro: "Erro ao salvar ficha técnica" });
-      }
-      res.json({ sucesso: true, id_ficha: result.insertId, mensagem: "Ingrediente vinculado ao produto com sucesso!" });
-    });
-  });
+                (
+                    SELECT COUNT(*)
+                    FROM insumo
+                    WHERE id_insumo = ?
+                      AND id_estabelecimento = ?
+                ) AS insumo_ok
+        `;
+
+        const check = await executeQuery(sqlChecagem, [
+            id_produto,
+            id_estabelecimento,
+            id_insumo,
+            id_estabelecimento
+        ]);
+
+        if (
+            !check[0].produto_ok ||
+            !check[0].insumo_ok
+        ) {
+            return res.status(403).json({
+                erro: "Produto ou insumo não pertence a este estabelecimento"
+            });
+        }
+
+        const sqlInsert = `
+            INSERT INTO produto_ficha_tecnica
+                (id_produto, id_insumo, qtd_consumida)
+            VALUES (?, ?, ?)
+        `;
+
+        const result = await executeQuery(sqlInsert, [
+            id_produto,
+            id_insumo,
+            Number(parseFloat(qtd_consumida).toFixed(3))
+        ]);
+
+        const estoqueReal =
+            await recalcularEstoqueProduto(
+                id_produto,
+                id_estabelecimento
+            );
+
+        return res.status(201).json({
+            sucesso: true,
+            id_ficha: result.insertId,
+            estoque_calculado: estoqueReal,
+            mensagem: "Ingrediente vinculado ao produto com sucesso!"
+        });
+
+    } catch (err) {
+        console.error(
+            "❌ Erro ao adicionar ficha:",
+            err
+        );
+
+        return res.status(500).json({
+            erro: "Erro ao salvar ficha técnica"
+        });
+    }
 });
 
 // 3. Remover um ingrediente da ficha técnica
@@ -519,23 +575,96 @@ app.delete('/produtos/ficha/:id_ficha', token.ValidateJWT, (req, res) => {
   const { id_ficha } = req.params;
   const id_estabelecimento = req.id_estabelecimento;
 
-  // Só deleta se a ficha pertencer a um produto deste estabelecimento
-  const sql = `
-    DELETE T FROM produto_ficha_tecnica T
-    INNER JOIN produto P ON P.id_produto = T.id_produto
-    WHERE T.id_ficha = ? AND P.id_estabelecimento = ?
+  // Primeiro descobrimos qual produto pertence à ficha
+  const sqlBuscar = `
+    SELECT T.id_produto
+    FROM produto_ficha_tecnica T
+    INNER JOIN produto P
+      ON P.id_produto = T.id_produto
+    WHERE T.id_ficha = ?
+      AND P.id_estabelecimento = ?
+    LIMIT 1
   `;
-  
-  db.query(sql, [id_ficha, id_estabelecimento], (err, result) => {
-    if (err) {
-      console.error("Erro ao remover item da ficha técnica:", err);
-      return res.status(500).json({ erro: "Erro ao remover item" });
+
+  db.query(
+    sqlBuscar,
+    [id_ficha, id_estabelecimento],
+    (err, rows) => {
+      if (err) {
+        console.error(
+          "Erro ao buscar ficha antes de excluir:",
+          err
+        );
+
+        return res.status(500).json({
+          erro: "Erro ao buscar item da ficha"
+        });
+      }
+
+      if (!rows || rows.length === 0) {
+        return res.status(404).json({
+          erro: "Item não encontrado ou permissão negada"
+        });
+      }
+
+      const id_produto = rows[0].id_produto;
+
+      // Agora exclui a ficha
+      const sqlDelete = `
+        DELETE FROM produto_ficha_tecnica
+        WHERE id_ficha = ?
+      `;
+
+      db.query(
+        sqlDelete,
+        [id_ficha],
+        (err, result) => {
+          if (err) {
+            console.error(
+              "Erro ao remover item da ficha técnica:",
+              err
+            );
+
+            return res.status(500).json({
+              erro: "Erro ao remover item"
+            });
+          }
+
+          if (result.affectedRows === 0) {
+            return res.status(404).json({
+              erro: "Item não encontrado"
+            });
+          }
+
+          // Depois de excluir, recalcula o estoque do produto
+          recalcularEstoqueProduto(
+            id_produto,
+            id_estabelecimento,
+            (erroEstoque, estoqueCalculado) => {
+              if (erroEstoque) {
+                console.error(
+                  "Erro ao recalcular estoque após exclusão:",
+                  erroEstoque
+                );
+
+                return res.status(500).json({
+                  erro: "Ingrediente removido, mas não foi possível recalcular o estoque."
+                });
+              }
+
+              return res.json({
+                sucesso: true,
+                mensagem:
+                  "Ingrediente removido da receita!",
+                id_produto,
+                qtd: estoqueCalculado
+              });
+            }
+          );
+        }
+      );
     }
-    if (result.affectedRows === 0) {
-      return res.status(403).json({ erro: "Item não encontrado ou permissão negada" });
-    }
-    res.json({ sucesso: true, mensagem: "Ingrediente removido da receita!" });
-  });
+  );
 });
 
 app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, response) {
@@ -1952,35 +2081,101 @@ function executeQuery(sql, params = []) {
     });
 }
 
-app.put('/produtos/ficha/:id_ficha', token.ValidateJWT, (req, res) => {
-  const { id_ficha } = req.params;
-  const id_estabelecimento = req.id_estabelecimento;
-  const { qtd_consumida } = req.body;
+app.put('/produtos/ficha/:id_ficha', token.ValidateJWT, async (req, res) => {
+    const { id_ficha } = req.params;
+    const id_estabelecimento = req.id_estabelecimento;
+    const { qtd_consumida } = req.body;
 
-  if (qtd_consumida == null || isNaN(parseFloat(qtd_consumida)) || parseFloat(qtd_consumida) <= 0) {
-    return res.status(400).json({ erro: "Informe uma quantidade consumida válida (maior que zero)" });
-  }
+    const qtd = parseFloat(qtd_consumida);
 
-  // Trava de segurança: só atualiza se a ficha pertencer a um produto do estabelecimento logado
-  const sql = `
-    UPDATE produto_ficha_tecnica T
-    INNER JOIN produto P ON P.id_produto = T.id_produto
-    SET T.qtd_consumida = ?
-    WHERE T.id_ficha = ? AND P.id_estabelecimento = ?
-  `;
-
-  db.query(sql, [qtd_consumida, id_ficha, id_estabelecimento], (err, result) => {
-    if (err) {
-      console.error("Erro ao atualizar ficha técnica:", err);
-      return res.status(500).json({ erro: "Erro ao atualizar ficha técnica" });
+    if (
+        qtd_consumida == null ||
+        isNaN(qtd) ||
+        qtd <= 0
+    ) {
+        return res.status(400).json({
+            erro: "Informe uma quantidade consumida válida (maior que zero)"
+        });
     }
 
-    if (result.affectedRows === 0) {
-      return res.status(403).json({ erro: "Item não encontrado ou permissão negada" });
-    }
+    try {
+        /*
+         * Primeiro descobrimos qual produto pertence
+         * a esta ficha.
+         */
+        const ficha = await executeQuery(
+            `
+            SELECT T.id_produto
+            FROM produto_ficha_tecnica T
+            INNER JOIN produto P
+                ON P.id_produto = T.id_produto
+            WHERE T.id_ficha = ?
+              AND P.id_estabelecimento = ?
+            `,
+            [
+                id_ficha,
+                id_estabelecimento
+            ]
+        );
 
-    res.json({ sucesso: true, mensagem: "Quantidade atualizada com sucesso!" });
-  });
+        if (ficha.length === 0) {
+            return res.status(404).json({
+                erro: "Ficha técnica não encontrada"
+            });
+        }
+
+        const id_produto = ficha[0].id_produto;
+
+        /*
+         * Atualiza a quantidade consumida.
+         */
+        const result = await executeQuery(
+            `
+            UPDATE produto_ficha_tecnica T
+            INNER JOIN produto P
+                ON P.id_produto = T.id_produto
+            SET T.qtd_consumida = ?
+            WHERE T.id_ficha = ?
+              AND P.id_estabelecimento = ?
+            `,
+            [
+                Number(qtd.toFixed(3)),
+                id_ficha,
+                id_estabelecimento
+            ]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(403).json({
+                erro: "Item não encontrado ou permissão negada"
+            });
+        }
+
+        /*
+         * Recalcula o estoque do produto.
+         */
+        const estoqueReal =
+            await recalcularEstoqueProduto(
+                id_produto,
+                id_estabelecimento
+            );
+
+        return res.json({
+            sucesso: true,
+            estoque_calculado: estoqueReal,
+            mensagem: "Quantidade atualizada com sucesso!"
+        });
+
+    } catch (err) {
+        console.error(
+            "❌ Erro ao atualizar ficha:",
+            err
+        );
+
+        return res.status(500).json({
+            erro: "Erro ao atualizar ficha técnica"
+        });
+    }
 });
 
 // --- NOVAS ROTAS DE INSUMOS ---
