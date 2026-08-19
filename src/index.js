@@ -177,70 +177,38 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
 });
 
 
-  // Atualizar produto
-  app.put("/produtos/:id", token.ValidateJWT, function (req, res) {
+  // Localize onde começa o app.put("/produtos/:id" ...
+app.put("/produtos/:id", token.ValidateJWT, function (req, res) {
     const id_produto = req.params.id;
-    const id_estabelecimento = req.id_estabelecimento; // Vem do Token decodificado
+    const id_estabelecimento = req.id_estabelecimento;
     
     let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, unidade_medida } = req.body;
 
-    // Garantir que preco >= 0
-    preco = preco != null ? Math.max(0, parseFloat(preco)) : 0;
+    // --- CORREÇÃO: Se estivermos enviando apenas a QTD (vinda do cálculo automático), 
+    // precisamos garantir que os campos obrigatórios não travem a operação.
+    // Vamos fazer o Update apenas do que foi enviado no body.
 
-    // Garantir campos obrigatórios
-    if (!nome || id_categoria == null) {
-      return res.status(400).json({ error: "Campos obrigatórios: nome, preco, id_categoria" });
-    }
+    const campos = [];
+    const valores = [];
 
-    // Unidade de medida: UN (padrão) ou fracionada (KG, G, L, ML)
-    const UNIDADES_VALIDAS = ["UN", "KG", "G", "L", "ML"];
-    unidade_medida = UNIDADES_VALIDAS.includes(unidade_medida) ? unidade_medida : "UN";
-    const ehFracionado = unidade_medida !== "UN";
+    if (nome !== undefined) { campos.push("nome = ?"); valores.push(nome); }
+    if (preco !== undefined) { campos.push("preco = ?"); valores.push(Math.max(0, parseFloat(preco))); }
+    if (descricao !== undefined) { campos.push("descricao = ?"); valores.push(descricao); }
+    if (url_foto !== undefined) { campos.push("url_foto = ?"); valores.push(url_foto); }
+    if (qtd !== undefined) { campos.push("qtd = ?"); valores.push(qtd); }
+    if (qtd_max !== undefined) { campos.push("qtd_max = ?"); valores.push(qtd_max); }
+    if (qtd_min !== undefined) { campos.push("qtd_min = ?"); valores.push(qtd_min); }
+    if (id_categoria !== undefined) { campos.push("id_categoria = ?"); valores.push(id_categoria); }
+    if (unidade_medida !== undefined) { campos.push("unidade_medida = ?"); valores.push(unidade_medida); }
 
-    // Conversão segura: UN aceita apenas inteiro, unidades fracionadas aceitam até 3 casas decimais
-    const parseQtd = (valor, fallback) => {
-      if (valor == null || valor === "") return fallback;
-      const num = ehFracionado ? parseFloat(valor) : parseInt(valor, 10);
-      if (isNaN(num) || num < 0) return fallback;
-      return ehFracionado ? Number(num.toFixed(3)) : num;
-    };
+    if (campos.length === 0) return res.status(400).json({ error: "Nada para atualizar" });
 
-    qtd = parseQtd(qtd, 0);
-    qtd_max = parseQtd(qtd_max, 0);
-    qtd_min = parseQtd(qtd_min, 0);
-    descricao = descricao || "";
-    url_foto = url_foto || "";
+    const ssql = `UPDATE produto SET ${campos.join(", ")} WHERE id_produto = ? AND id_estabelecimento = ?`;
+    valores.push(id_produto, id_estabelecimento);
 
-    // SQL com trava de segurança: id_produto + id_estabelecimento
-    const ssql = `
-      UPDATE produto
-      SET 
-        nome = ?,
-        preco = ?,
-        descricao = ?,
-        url_foto = ?,
-        qtd = ?,
-        qtd_max = ?,
-        qtd_min = ?,
-        id_categoria = ?,
-        unidade_medida = ?
-      WHERE id_produto = ? AND id_estabelecimento = ?
-    `;
-
-    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, unidade_medida, id_produto, id_estabelecimento];
-
-    db.query(ssql, params, function (err, result) {
-      if (err) {
-        console.error("Erro ao atualizar produto:", err);
-        return res.status(500).json({ error: "Erro ao atualizar produto" });
-      }
-
-      // Se affectedRows for 0, significa que o produto não existe OU não pertence a essa empresa
-      if (result.affectedRows === 0) {
-        return res.status(403).json({ error: "Produto não encontrado ou acesso negado" });
-      }
-
-      return res.status(200).json({ message: "Produto atualizado com sucesso" });
+    db.query(ssql, valores, function (err, result) {
+        if (err) return res.status(500).json({ error: err.message });
+        return res.status(200).json({ message: "Produto atualizado com sucesso" });
     });
 });
 
@@ -571,100 +539,31 @@ app.post('/produtos/ficha', token.ValidateJWT, async (req, res) => {
 });
 
 // 3. Remover um ingrediente da ficha técnica
-app.delete('/produtos/ficha/:id_ficha', token.ValidateJWT, (req, res) => {
+app.delete('/produtos/ficha/:id_ficha', token.ValidateJWT, async (req, res) => {
   const { id_ficha } = req.params;
   const id_estabelecimento = req.id_estabelecimento;
 
-  // Primeiro descobrimos qual produto pertence à ficha
-  const sqlBuscar = `
-    SELECT T.id_produto
-    FROM produto_ficha_tecnica T
-    INNER JOIN produto P
-      ON P.id_produto = T.id_produto
-    WHERE T.id_ficha = ?
-      AND P.id_estabelecimento = ?
-    LIMIT 1
-  `;
+  try {
+      // 1. Descobrir qual o produto antes de deletar
+      const rows = await executeQuery(`
+          SELECT T.id_produto FROM produto_ficha_tecnica T 
+          JOIN produto P ON P.id_produto = T.id_produto
+          WHERE T.id_ficha = ? AND P.id_estabelecimento = ?`, [id_ficha, id_estabelecimento]);
 
-  db.query(
-    sqlBuscar,
-    [id_ficha, id_estabelecimento],
-    (err, rows) => {
-      if (err) {
-        console.error(
-          "Erro ao buscar ficha antes de excluir:",
-          err
-        );
-
-        return res.status(500).json({
-          erro: "Erro ao buscar item da ficha"
-        });
-      }
-
-      if (!rows || rows.length === 0) {
-        return res.status(404).json({
-          erro: "Item não encontrado ou permissão negada"
-        });
-      }
+      if (rows.length === 0) return res.status(404).json({ erro: "Item não encontrado" });
 
       const id_produto = rows[0].id_produto;
 
-      // Agora exclui a ficha
-      const sqlDelete = `
-        DELETE FROM produto_ficha_tecnica
-        WHERE id_ficha = ?
-      `;
+      // 2. Deletar
+      await executeQuery(`DELETE FROM produto_ficha_tecnica WHERE id_ficha = ?`, [id_ficha]);
 
-      db.query(
-        sqlDelete,
-        [id_ficha],
-        (err, result) => {
-          if (err) {
-            console.error(
-              "Erro ao remover item da ficha técnica:",
-              err
-            );
+      // 3. Recalcular estoque (Usando a nova função do Passo A)
+      const novoEstoque = await recalcularEstoqueProduto(id_produto, id_estabelecimento);
 
-            return res.status(500).json({
-              erro: "Erro ao remover item"
-            });
-          }
-
-          if (result.affectedRows === 0) {
-            return res.status(404).json({
-              erro: "Item não encontrado"
-            });
-          }
-
-          // Depois de excluir, recalcula o estoque do produto
-          recalcularEstoqueProduto(
-            id_produto,
-            id_estabelecimento,
-            (erroEstoque, estoqueCalculado) => {
-              if (erroEstoque) {
-                console.error(
-                  "Erro ao recalcular estoque após exclusão:",
-                  erroEstoque
-                );
-
-                return res.status(500).json({
-                  erro: "Ingrediente removido, mas não foi possível recalcular o estoque."
-                });
-              }
-
-              return res.json({
-                sucesso: true,
-                mensagem:
-                  "Ingrediente removido da receita!",
-                id_produto,
-                qtd: estoqueCalculado
-              });
-            }
-          );
-        }
-      );
-    }
-  );
+      res.json({ sucesso: true, id_produto, qtd: novoEstoque });
+  } catch (err) {
+      res.status(500).json({ erro: err.message });
+  }
 });
 
 app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, response) {
