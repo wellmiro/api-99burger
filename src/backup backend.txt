@@ -1,5 +1,3 @@
-backup backend
-
 require('dotenv').config();
 const jwt = require('jsonwebtoken');
 const express = require("express");
@@ -180,121 +178,44 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
 
 
   // Atualizar produto
+ // Atualizar produto - Versão Flexível para Produção
   app.put("/produtos/:id", token.ValidateJWT, function (req, res) {
     const id_produto = req.params.id;
-    const id_estabelecimento = req.id_estabelecimento; // Vem do Token decodificado
+    const id_estabelecimento = req.id_estabelecimento;
+    const body = req.body;
+
+    const campos = [];
+    const valores = [];
+
+    // Mapeia apenas o que foi enviado no JSON
+    const colunasPermitidas = ["nome", "preco", "descricao", "url_foto", "qtd", "qtd_max", "qtd_min", "id_categoria", "unidade_medida"];
     
-    let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, unidade_medida } = req.body;
+    Object.keys(body).forEach(chave => {
+      if (colunasPermitidas.includes(chave)) {
+        campos.push(`${chave} = ?`);
+        // Se for preço, garante que não seja negativo
+        let valor = body[chave];
+        if (chave === 'preco') valor = Math.max(0, parseFloat(valor));
+        valores.push(valor);
+      }
+    });
 
-    // Garantir que preco >= 0
-    preco = preco != null ? Math.max(0, parseFloat(preco)) : 0;
-
-    // Garantir campos obrigatórios
-    if (!nome || id_categoria == null) {
-      return res.status(400).json({ error: "Campos obrigatórios: nome, preco, id_categoria" });
+    if (campos.length === 0) {
+      return res.status(400).json({ error: "Nenhum campo válido para atualizar" });
     }
 
-    // Unidade de medida: UN (padrão) ou fracionada (KG, G, L, ML)
-    const UNIDADES_VALIDAS = ["UN", "KG", "G", "L", "ML"];
-    unidade_medida = UNIDADES_VALIDAS.includes(unidade_medida) ? unidade_medida : "UN";
-    const ehFracionado = unidade_medida !== "UN";
+    const ssql = `UPDATE produto SET ${campos.join(", ")} WHERE id_produto = ? AND id_estabelecimento = ?`;
+    valores.push(id_produto, id_estabelecimento);
 
-    // Conversão segura: UN aceita apenas inteiro, unidades fracionadas aceitam até 3 casas decimais
-    const parseQtd = (valor, fallback) => {
-      if (valor == null || valor === "") return fallback;
-      const num = ehFracionado ? parseFloat(valor) : parseInt(valor, 10);
-      if (isNaN(num) || num < 0) return fallback;
-      return ehFracionado ? Number(num.toFixed(3)) : num;
-    };
-
-    qtd = parseQtd(qtd, 0);
-    qtd_max = parseQtd(qtd_max, 0);
-    qtd_min = parseQtd(qtd_min, 0);
-    descricao = descricao || "";
-    url_foto = url_foto || "";
-
-    // SQL com trava de segurança: id_produto + id_estabelecimento
-    const ssql = `
-      UPDATE produto
-      SET 
-        nome = ?,
-        preco = ?,
-        descricao = ?,
-        url_foto = ?,
-        qtd = ?,
-        qtd_max = ?,
-        qtd_min = ?,
-        id_categoria = ?,
-        unidade_medida = ?
-      WHERE id_produto = ? AND id_estabelecimento = ?
-    `;
-
-    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, unidade_medida, id_produto, id_estabelecimento];
-
-    db.query(ssql, params, function (err, result) {
+    db.query(ssql, valores, function (err, result) {
       if (err) {
         console.error("Erro ao atualizar produto:", err);
-        return res.status(500).json({ error: "Erro ao atualizar produto" });
+        return res.status(500).json({ error: "Erro interno no banco" });
       }
-
-      // Se affectedRows for 0, significa que o produto não existe OU não pertence a essa empresa
       if (result.affectedRows === 0) {
         return res.status(403).json({ error: "Produto não encontrado ou acesso negado" });
       }
-
       return res.status(200).json({ message: "Produto atualizado com sucesso" });
-    });
-});
-
-
-  // Endpoint para cadastrar produto
-  app.post("/produtos", token.ValidateJWT, function (req, res) {
-    const id_estabelecimento = req.id_estabelecimento; // Vem do Token decodificado
-    let { nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, unidade_medida } = req.body;
-
-    // Correção: parseFloat (tinha um erro de digitação no seu)
-    preco = preco != null ? Math.max(0, parseFloat(preco)) : 0;
-
-    if (!nome || id_categoria == null) {
-        return res.status(400).json({ error: "Campos obrigatórios: nome, preco, id_categoria" });
-    }
-
-    // Unidade de medida: UN (padrão) ou fracionada (KG, G, L, ML)
-    const UNIDADES_VALIDAS = ["UN", "KG", "G", "L", "ML"];
-    unidade_medida = UNIDADES_VALIDAS.includes(unidade_medida) ? unidade_medida : "UN";
-    const ehFracionado = unidade_medida !== "UN";
-
-    // Conversão segura: UN aceita apenas inteiro, unidades fracionadas aceitam até 3 casas decimais
-    const parseQtd = (valor, fallback) => {
-      if (valor == null || valor === "") return fallback;
-      const num = ehFracionado ? parseFloat(valor) : parseInt(valor, 10);
-      if (isNaN(num) || num < 0) return fallback;
-      return ehFracionado ? Number(num.toFixed(3)) : num;
-    };
-
-    qtd = parseQtd(qtd, 0);
-    qtd_max = parseQtd(qtd_max, 20); // Valor padrão se vier vazio
-    qtd_min = parseQtd(qtd_min, 0);
-    descricao = descricao || "";
-    url_foto = url_foto || "";
-
-    const ssql = `
-        INSERT INTO produto 
-            (nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_estabelecimento, unidade_medida)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `;
-
-    const params = [nome, preco, descricao, url_foto, qtd, qtd_max, qtd_min, id_categoria, id_estabelecimento, unidade_medida];
-
-    db.query(ssql, params, function (err, result) {
-        if (err) {
-            console.error("Erro ao cadastrar produto:", err);
-            return res.status(500).json({ error: "Erro ao cadastrar produto" });
-        }
-        return res.status(201).json({ 
-            message: "Produto cadastrado com sucesso", 
-            id_produto: result.insertId 
-        });
     });
 });
 
@@ -573,100 +494,33 @@ app.post('/produtos/ficha', token.ValidateJWT, async (req, res) => {
 });
 
 // 3. Remover um ingrediente da ficha técnica
-app.delete('/produtos/ficha/:id_ficha', token.ValidateJWT, (req, res) => {
+// Remover um ingrediente da ficha técnica e atualizar estoque principal
+app.delete('/produtos/ficha/:id_ficha', token.ValidateJWT, async (req, res) => {
   const { id_ficha } = req.params;
   const id_estabelecimento = req.id_estabelecimento;
 
-  // Primeiro descobrimos qual produto pertence à ficha
-  const sqlBuscar = `
-    SELECT T.id_produto
-    FROM produto_ficha_tecnica T
-    INNER JOIN produto P
-      ON P.id_produto = T.id_produto
-    WHERE T.id_ficha = ?
-      AND P.id_estabelecimento = ?
-    LIMIT 1
-  `;
+  try {
+      // 1. Descobrir qual o produto antes de deletar (Segurança)
+      const rows = await executeQuery(`
+          SELECT T.id_produto FROM produto_ficha_tecnica T 
+          JOIN produto P ON P.id_produto = T.id_produto
+          WHERE T.id_ficha = ? AND P.id_estabelecimento = ?`, [id_ficha, id_estabelecimento]);
 
-  db.query(
-    sqlBuscar,
-    [id_ficha, id_estabelecimento],
-    (err, rows) => {
-      if (err) {
-        console.error(
-          "Erro ao buscar ficha antes de excluir:",
-          err
-        );
-
-        return res.status(500).json({
-          erro: "Erro ao buscar item da ficha"
-        });
-      }
-
-      if (!rows || rows.length === 0) {
-        return res.status(404).json({
-          erro: "Item não encontrado ou permissão negada"
-        });
-      }
+      if (rows.length === 0) return res.status(404).json({ erro: "Item não encontrado ou acesso negado" });
 
       const id_produto = rows[0].id_produto;
 
-      // Agora exclui a ficha
-      const sqlDelete = `
-        DELETE FROM produto_ficha_tecnica
-        WHERE id_ficha = ?
-      `;
+      // 2. Deleta o ingrediente
+      await executeQuery(`DELETE FROM produto_ficha_tecnica WHERE id_ficha = ?`, [id_ficha]);
 
-      db.query(
-        sqlDelete,
-        [id_ficha],
-        (err, result) => {
-          if (err) {
-            console.error(
-              "Erro ao remover item da ficha técnica:",
-              err
-            );
+      // 3. Recalcula o estoque do produto principal (Usa a função do fim do arquivo)
+      const novoEstoque = await recalcularEstoqueProduto(id_produto, id_estabelecimento);
 
-            return res.status(500).json({
-              erro: "Erro ao remover item"
-            });
-          }
-
-          if (result.affectedRows === 0) {
-            return res.status(404).json({
-              erro: "Item não encontrado"
-            });
-          }
-
-          // Depois de excluir, recalcula o estoque do produto
-          recalcularEstoqueProduto(
-            id_produto,
-            id_estabelecimento,
-            (erroEstoque, estoqueCalculado) => {
-              if (erroEstoque) {
-                console.error(
-                  "Erro ao recalcular estoque após exclusão:",
-                  erroEstoque
-                );
-
-                return res.status(500).json({
-                  erro: "Ingrediente removido, mas não foi possível recalcular o estoque."
-                });
-              }
-
-              return res.json({
-                sucesso: true,
-                mensagem:
-                  "Ingrediente removido da receita!",
-                id_produto,
-                qtd: estoqueCalculado
-              });
-            }
-          );
-        }
-      );
-    }
-  );
+      res.json({ sucesso: true, id_produto, qtd: novoEstoque, mensagem: "Ingrediente removido e estoque atualizado!" });
+  } catch (err) {
+      console.error("Erro ao remover item da ficha:", err);
+      res.status(500).json({ erro: "Erro ao processar exclusão" });
+  }
 });
 
 app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, response) {
@@ -2469,12 +2323,46 @@ app.get("/financeiro/resumo", token.ValidateJWT, function (req, res) {
     });
 });
 
+// --- COLA ESSA FUNÇÃO AQUI (Faltou ela) ---
+function executeQuery(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.query(sql, params, (err, results) => {
+            if (err) return reject(err);
+            resolve(results);
+        });
+    });
+}
+
+
+async function recalcularEstoqueProduto(id_produto, id_estabelecimento) {
+    const sql = `
+        SELECT T.qtd_consumida, I.qtd_atual, P.unidade_medida
+        FROM produto_ficha_tecnica T
+        JOIN insumo I ON T.id_insumo = I.id_insumo
+        JOIN produto P ON P.id_produto = T.id_produto
+        WHERE T.id_produto = ? AND P.id_estabelecimento = ?
+    `;
+
+    const rows = await executeQuery(sql, [id_produto, id_estabelecimento]);
+    if (rows.length === 0) {
+        await executeQuery("UPDATE produto SET qtd = 0 WHERE id_produto = ?", [id_produto]);
+        return 0;
+    }
+
+    const capacidades = rows.map(item => {
+        const estoque = parseFloat(item.qtd_atual) || 0;
+        const consome = parseFloat(item.qtd_consumida) || 0;
+        return consome > 0 ? estoque / consome : 999999;
+    });
+
+    let estoqueReal = Math.min(...capacidades);
+    estoqueReal = rows[0].unidade_medida === 'UN' ? Math.floor(estoqueReal) : parseFloat(estoqueReal.toFixed(3));
+
+    await executeQuery("UPDATE produto SET qtd = ? WHERE id_produto = ?", [estoqueReal, id_produto]);
+    return estoqueReal;
+}
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
 });
-// v2 bugou kkk
-// v3
-// v4
-// v5
