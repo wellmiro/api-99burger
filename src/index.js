@@ -1915,15 +1915,24 @@ const atualizarStatusPedido = async (req, res) => {
     status = status.toUpperCase();
 
     try {
+        // 0. Busca o status ATUAL do pedido antes de sobrescrever, pra saber se
+        //    ele já estava finalizado (evita descontar estoque duas vezes em
+        //    caso de clique duplo / requisição repetida chegando quase junto)
+        const pedidoAtualResult = await executeQuery(
+            "SELECT status FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?",
+            [id_pedido, id_estabelecimento]
+        );
+        const statusAnterior = pedidoAtualResult.length > 0 ? pedidoAtualResult[0].status : null;
+
         // 1. Atualiza o status do pedido no banco de dados primeiro
         const sqlStatus = "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?";
         await executeQuery(sqlStatus, [status, id_pedido, id_estabelecimento]);
 
-        // 2. Se for Finalizado ('F'), dá baixa no estoque
+        // 2. Se for Finalizado ('F') E ainda NÃO estava finalizado antes, dá baixa no estoque
         //    Regra: SEMPRE desconta o qtd do próprio produto vendido
         //           E TAMBÉM desconta cada insumo vinculado na ficha técnica dele
         //           (são controles de estoque separados, um não substitui o outro)
-        if (status === 'F') {
+        if (status === 'F' && statusAnterior !== 'F') {
             try {
                 // Busca cada item do pedido
                 const sqlItens = `
@@ -1978,6 +1987,8 @@ const atualizarStatusPedido = async (req, res) => {
             } catch (stockError) {
                 console.error("[Baixa de estoque] ERRO ao dar baixa:", stockError.message, stockError.stack);
             }
+        } else if (status === 'F' && statusAnterior === 'F') {
+            console.log(`[Baixa de estoque] Pedido ${id_pedido} já estava finalizado — ignorando baixa duplicada.`);
         }
 
         return res.json({ message: "Status do pedido atualizado com sucesso!" });

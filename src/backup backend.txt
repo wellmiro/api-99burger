@@ -219,6 +219,71 @@ app.get("/produtos/cardapio", token.ValidateJWT, function (request, response) {
     });
 });
 
+// POST - Criar novo produto (Usado pelo Portal React e App Delphi)
+app.post("/produtos", token.ValidateJWT, function (req, res) {
+    const id_estabelecimento = req.id_estabelecimento; // Vem do Token decodificado
+    const { 
+        nome, 
+        preco, 
+        descricao, 
+        url_foto, 
+        qtd, 
+        qtd_max, 
+        qtd_min, 
+        id_categoria, 
+        unidade_medida 
+    } = req.body;
+
+    // Validação de campos obrigatórios (conforme seu Delphi envia)
+    if (!nome || preco === undefined || !id_categoria) {
+        return res.status(400).json({ error: "Campos obrigatórios: nome, preco e id_categoria." });
+    }
+
+    // Regra: Se a unidade_medida não vier, vira 'UN'
+    const unidadeFinal = unidade_medida || 'UN';
+
+    const ssql = `
+        INSERT INTO produto (
+            id_categoria, 
+            nome, 
+            descricao, 
+            preco, 
+            url_foto, 
+            qtd, 
+            qtd_max, 
+            qtd_min, 
+            unidade_medida, 
+            id_estabelecimento
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `;
+
+    const valores = [
+        id_categoria,
+        nome,
+        descricao || "",
+        Math.max(0, parseFloat(preco)),
+        url_foto || "",
+        qtd || 0,
+        qtd_max || 0,
+        qtd_min || 0,
+        unidadeFinal,
+        id_estabelecimento
+    ];
+
+    db.query(ssql, valores, function (err, result) {
+        if (err) {
+            console.error("Erro no INSERT de produto:", err);
+            return res.status(500).json({ error: "Erro interno no banco: " + err.message });
+        }
+
+        // Retorno 201 (Created) para o Delphi e React
+        return res.status(201).json({ 
+            id_produto: result.insertId, 
+            message: "Produto cadastrado com sucesso!" 
+        });
+    });
+});
+
 
   // Deletar um produto pelo id
  app.delete("/produtos/:id", token.ValidateJWT, function (req, res) {
