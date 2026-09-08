@@ -738,23 +738,33 @@ app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
  app.get("/pedidos", token.ValidateJWT, function (request, response) {
     // O ID vem do Token decodificado pelo middleware
     const id_est = request.id_estabelecimento; 
+    const { data } = request.query; // Pega o parâmetro data da URL (ex: ?data=2023-10-27)
+
+    let params = [id_est];
+    let filtro_data = "";
+
+    // Se você passar a data na URL, adicionamos o filtro no SQL
+    if (data) {
+        filtro_data = " AND DATE(p.dt_pedido) = ? ";
+        params.push(data);
+    }
 
     let ssql = "select p.id_pedido, p.status, date_format(p.dt_pedido, '%d/%m/%Y %H:%i:%s') as dt_pedido, ";
     ssql += "p.vl_subtotal, p.vl_entrega, p.forma_pagamento, p.vl_total, ";
-    ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo, "; // <-- ADICIONADO AQUI
+    ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo, ";
     ssql += "count(i.id_item) as qtd_item, p.nome_cliente ";
     ssql += "from pedido p ";
     ssql += "join pedido_item i on i.id_pedido = p.id_pedido ";
     
-    // Filtro pelo estabelecimento vindo do Token
-    ssql += "where p.id_estabelecimento = ? "; 
+    // Filtro pelo estabelecimento + filtro opcional de data
+    ssql += "where p.id_estabelecimento = ? " + filtro_data; 
     
     ssql += "group by p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido, ";
     ssql += "p.vl_subtotal, p.vl_entrega, p.vl_total, p.nome_cliente, ";
-    ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo "; // <-- ADICIONADO AO GROUP BY
+    ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo ";
     ssql += "order by p.id_pedido desc ";
 
-    db.query(ssql, [id_est], function (err, result) {
+    db.query(ssql, params, function (err, result) {
         if (err) {
             return response.status(500).send(err);
         } else {
