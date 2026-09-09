@@ -743,7 +743,8 @@ app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
     let filtro_data = "";
 
     if (data) {
-        filtro_data = " AND DATE(p.dt_pedido) = ? ";
+        // Mudou de '=' para '>=' para pegar a partir da data informada (ontem e hoje)
+        filtro_data = " AND DATE(p.dt_pedido) >= ? ";
         params.push(data);
     }
 
@@ -762,9 +763,8 @@ app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
     db.query(ssql, params, function (err, result) {
         if (err) {
             console.error("Erro ao listar pedidos:", err);
-            return response.status(500).json({ error: "Erro interno ao buscar pedidos." });
-        } 
-        
+            return response.status(500).json({ error: "Erro interno no servidor." });
+        }
         return response.status(200).json(result);
     });
 });
