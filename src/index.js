@@ -736,14 +736,12 @@ app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
 });
 
  app.get("/pedidos", token.ValidateJWT, function (request, response) {
-    // O ID vem do Token decodificado pelo middleware
     const id_est = request.id_estabelecimento; 
-    const { data } = request.query; // Pega o parâmetro data da URL (ex: ?data=2023-10-27)
+    const { data } = request.query;
 
     let params = [id_est];
     let filtro_data = "";
 
-    // Se você passar a data na URL, adicionamos o filtro no SQL
     if (data) {
         filtro_data = " AND DATE(p.dt_pedido) = ? ";
         params.push(data);
@@ -754,11 +752,8 @@ app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
     ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo, ";
     ssql += "count(i.id_item) as qtd_item, p.nome_cliente ";
     ssql += "from pedido p ";
-    ssql += "join pedido_item i on i.id_pedido = p.id_pedido ";
-    
-    // Filtro pelo estabelecimento + filtro opcional de data
+    ssql += "left join pedido_item i on i.id_pedido = p.id_pedido ";
     ssql += "where p.id_estabelecimento = ? " + filtro_data; 
-    
     ssql += "group by p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido, ";
     ssql += "p.vl_subtotal, p.vl_entrega, p.vl_total, p.nome_cliente, ";
     ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo ";
@@ -766,10 +761,11 @@ app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
 
     db.query(ssql, params, function (err, result) {
         if (err) {
-            return response.status(500).send(err);
-        } else {
-            return response.status(200).json(result);
-        }
+            console.error("Erro ao listar pedidos:", err);
+            return response.status(500).json({ error: "Erro interno ao buscar pedidos." });
+        } 
+        
+        return response.status(200).json(result);
     });
 });
 
