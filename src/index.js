@@ -2522,6 +2522,57 @@ app.get("/pix/status/:payment_id", async function (req, res) {
     }
 });
 
+app.post("/pix/reembolsar", async function (req, res) {
+    const { id_pedido } = req.body;
+
+    // 1. Busca o mp_payment_id e o status atual do pedido no banco
+    const sqlSelect = "SELECT mp_payment_id, status, forma_pagamento FROM pedido WHERE id_pedido = ?";
+    
+    db.query(sqlSelect, [id_pedido], async (err, result) => {
+        if (err || result.length === 0) {
+            return res.status(404).json({ error: "Pedido não localizado." });
+        }
+
+        const pedido = result[0];
+
+        // Valida se o pedido foi pago via Pix e possui ID de pagamento
+        if (!pedido.mp_payment_id || !pedido.forma_pagamento.includes("PIX")) {
+            return res.status(400).json({ error: "Este pedido não possui um pagamento Pix online associado para estornar." });
+        }
+
+        try {
+            // 2. Chama a API de Refund (Reembolso) do Mercado Pago
+            const responseMP = await axios.post(
+                `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}/refunds`,
+                {}, // Corpo vazio faz o estorno total do valor
+                {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+                        'X-Idempotency-Key': `refund-pedido-${id_pedido}` // Evita duplicação acidental
+                    }
+                }
+            );
+
+            // 3. Atualiza o status do pedido no banco para Cancelado (C)
+            const sqlUpdate = "UPDATE pedido SET status = 'C' WHERE id_pedido = ?";
+            db.query(sqlUpdate, [id_pedido]);
+
+            return res.status(200).json({
+                sucesso: true,
+                mensagem: "Pix reembolsado com sucesso para o cliente!",
+                detalhes: responseMP.data
+            });
+
+        } catch (error) {
+            console.error("Erro ao estornar Pix no Mercado Pago:", error.response?.data || error.message);
+            return res.status(500).json({ 
+                error: "Erro ao processar o reembolso no Mercado Pago.",
+                detalhe: error.response?.data || error.message 
+            });
+        }
+    });
+});
+
 
 async function recalcularEstoqueProduto(id_produto, id_estabelecimento) {
     const sql = `
