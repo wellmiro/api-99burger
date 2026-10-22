@@ -1498,6 +1498,27 @@ app.post('/notificacoes/publico', async (req, res) => {
         });
     }
 
+    // Rede de segurança: se já existe notificação desse pedido, não cria outra
+    if (id_pedido) {
+        try {
+            const existente = await executeQuery(
+                `SELECT id_notificacao FROM notificacoes
+                  WHERE id_pedido = ? AND id_estabelecimento = ? AND tipo = 'CARDAPIO_DIGITAL'
+                  LIMIT 1`,
+                [id_pedido, id_estabelecimento]
+            );
+            if (existente.length > 0) {
+                return res.status(200).json({
+                    ok: true,
+                    id_notificacao: existente[0].id_notificacao,
+                    duplicado: true
+                });
+            }
+        } catch (e) {
+            console.error('Erro ao checar notificação existente:', e.message);
+        }
+    }
+
     const sql = `
         INSERT INTO notificacoes
         (
@@ -1809,6 +1830,12 @@ app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
     }
 });
 
+// Cache em memória de pedidos públicos recém-criados (chave de idempotência -> Promise do id_pedido).
+// Se o mesmo checkout chegar duas vezes (duplo clique, retry de rede), a 2ª chamada
+// recebe o MESMO pedido em vez de criar outro.
+const pedidosPublicosRecentes = new Map();
+const TTL_IDEMPOTENCIA_MS = 10 * 60 * 1000;
+
 app.post('/pedidos/publico', async (req, res) => {
     const p = req.body;
 
@@ -1817,7 +1844,6 @@ app.post('/pedidos/publico', async (req, res) => {
         return res.status(400).json({ error: 'Pedido inválido: O carrinho está vazio ou o valor total é zero.' });
     }
 
-    // Validação básica
     if (!p.slug) {
         return res.status(400).json({ error: 'Slug do estabelecimento é obrigatório' });
     }
@@ -1826,7 +1852,24 @@ app.post('/pedidos/publico', async (req, res) => {
         return res.status(400).json({ error: 'Nome do cliente é obrigatório' });
     }
 
-    try {
+    const chave = p.idempotency_key ? `${p.slug}:${p.idempotency_key}` : null;
+
+    // Já existe (ou está sendo criado) um pedido com essa chave? Devolve o mesmo.
+    if (chave && pedidosPublicosRecentes.has(chave)) {
+        try {
+            const idExistente = await pedidosPublicosRecentes.get(chave);
+            console.log(`♻️ Pedido duplicado ignorado (chave ${p.idempotency_key}) -> devolvendo #${idExistente}`);
+            return res.status(200).json({
+                id_pedido: idExistente,
+                message: 'Pedido já registrado.',
+                duplicado: true
+            });
+        } catch (e) {
+            return res.status(500).json({ error: e.message });
+        }
+    }
+
+    const criarPedido = (async () => {
         // 1. Busca o id_estabelecimento pelo slug
         const estabelecimento = await new Promise((resolve, reject) => {
             db.query(
@@ -1847,17 +1890,18 @@ app.post('/pedidos/publico', async (req, res) => {
         agora.setHours(agora.getHours() - 3);
         const dtPedidoBrasilia = agora.toISOString().slice(0, 19).replace('T', ' ');
 
-        // 🔥 session_id vindo do frontend
         const session_id = p.session_id || null;
+        const mp_payment_id = p.mp_payment_id ? String(p.mp_payment_id) : null;
 
-        // 3. INSERT do Pedido
+        // 3. INSERT do Pedido (agora grava mp_payment_id, necessário pro estorno do Pix)
         const result = await new Promise((resolve, reject) => {
             db.query(
                 `INSERT INTO pedido 
                 (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, 
                  forma_pagamento, vl_total, status, dt_pedido, endereco_entrega, 
-                 rota, observacao, local_consumo, dinheiro, troco, session_id)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 rota, observacao, local_consumo, dinheiro, troco, session_id,
+                 mp_payment_id, mp_status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     null,
                     id_estabelecimento,
@@ -1874,7 +1918,9 @@ app.post('/pedidos/publico', async (req, res) => {
                     p.local_consumo || 'DELIVERY',
                     p.dinheiro || 0,
                     p.troco || 0,
-                    session_id
+                    session_id,
+                    mp_payment_id,
+                    mp_payment_id ? 'pending' : null
                 ],
                 (err, res) => err ? reject(err) : resolve(res)
             );
@@ -1902,19 +1948,32 @@ app.post('/pedidos/publico', async (req, res) => {
             });
         }
 
-        res.status(201).json({
+        return idPedido;
+    })();
+
+    // Registra ANTES de aguardar: uma 2ª requisição simultânea já cai no cache acima
+    if (chave) {
+        pedidosPublicosRecentes.set(chave, criarPedido);
+        setTimeout(() => pedidosPublicosRecentes.delete(chave), TTL_IDEMPOTENCIA_MS);
+    }
+
+    try {
+        const idPedido = await criarPedido;
+        return res.status(201).json({
             id_pedido: idPedido,
             message: 'Pedido realizado com sucesso!'
         });
-
     } catch (e) {
+        if (chave) pedidosPublicosRecentes.delete(chave); // falhou: libera nova tentativa
         console.error('Erro no /pedidos/publico:', e);
-        res.status(500).json({ error: e.message });
+        return res.status(500).json({ error: e.message });
     }
 });
 
 
-// Função principal para atualizar o status do pedido
+// Função ÚNICA para atualizar o status do pedido (usada por PUT e POST).
+// Antes existiam dois handlers: o PUT (que o Delphi usa) tinha estorno mas NÃO dava baixa
+// no estoque, e o POST dava baixa mas não estornava.
 const atualizarStatusPedido = async (req, res) => {
     const { id_pedido } = req.params;
     let { status } = req.body;
@@ -1924,29 +1983,91 @@ const atualizarStatusPedido = async (req, res) => {
         return res.status(400).json({ error: "O campo status é obrigatório." });
     }
 
-    status = status.toUpperCase();
+    status = String(status).toUpperCase();
 
     try {
-        // 0. Busca o status ATUAL do pedido antes de sobrescrever, pra saber se
-        //    ele já estava finalizado (evita descontar estoque duas vezes em
-        //    caso de clique duplo / requisição repetida chegando quase junto)
-        const pedidoAtualResult = await executeQuery(
-            "SELECT status FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?",
+        // 0. Busca o pedido ATUAL (status anterior + dados do Pix)
+        const pedidoArr = await executeQuery(
+            `SELECT status, mp_payment_id, forma_pagamento, vl_total
+               FROM pedido
+              WHERE id_pedido = ? AND id_estabelecimento = ?`,
             [id_pedido, id_estabelecimento]
         );
-        const statusAnterior = pedidoAtualResult.length > 0 ? pedidoAtualResult[0].status : null;
 
-        // 1. Atualiza o status do pedido no banco de dados primeiro
-        const sqlStatus = "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?";
-        await executeQuery(sqlStatus, [status, id_pedido, id_estabelecimento]);
+        if (pedidoArr.length === 0) {
+            return res.status(404).json({ error: "Pedido não encontrado." });
+        }
 
-        // 2. Se for Finalizado ('F') E ainda NÃO estava finalizado antes, dá baixa no estoque
-        //    Regra: SEMPRE desconta o qtd do próprio produto vendido
-        //           E TAMBÉM desconta cada insumo vinculado na ficha técnica dele
-        //           (são controles de estoque separados, um não substitui o outro)
+        const pedido = pedidoArr[0];
+        const statusAnterior = pedido.status;
+
+        // Requisição repetida (clique duplo no Delphi): não refaz estorno nem baixa de estoque
+        if (statusAnterior === status) {
+            console.log(`ℹ️ Pedido ${id_pedido} já estava com status ${status} — ignorando repetição.`);
+            return res.json({ sucesso: true, message: "Status já estava atualizado." });
+        }
+
+        // 1. CANCELADO: devolve o dinheiro do Pix (se pago) ou cancela a cobrança (se ainda pendente)
+        let mpStatusNovo = null;
+        if (status === 'C') {
+            const ehPix = pedido.forma_pagamento && pedido.forma_pagamento.toUpperCase().includes("PIX");
+
+            if (pedido.mp_payment_id && Number(pedido.vl_total) > 0 && ehPix) {
+                const headersMP = { 'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}` };
+
+                try {
+                    const consulta = await axios.get(
+                        `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}`,
+                        { headers: headersMP }
+                    );
+                    const statusMP = consulta.data.status;
+
+                    if (statusMP === 'approved') {
+                        await axios.post(
+                            `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}/refunds`,
+                            {},
+                            { headers: { ...headersMP, 'X-Idempotency-Key': `refund-pedido-${id_pedido}` } }
+                        );
+                        mpStatusNovo = 'refunded';
+                        console.log(`✅ Pix do pedido ${id_pedido} estornado com sucesso!`);
+                    } else if (statusMP === 'pending' || statusMP === 'in_process') {
+                        // Cliente ainda não pagou: cancela a cobrança pra ele não conseguir pagar depois
+                        await axios.put(
+                            `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}`,
+                            { status: 'cancelled' },
+                            { headers: headersMP }
+                        );
+                        mpStatusNovo = 'cancelled';
+                        console.log(`🚫 Cobrança Pix do pedido ${id_pedido} cancelada (ainda não estava paga).`);
+                    } else {
+                        console.log(`ℹ️ Pedido ${id_pedido}: pagamento MP está '${statusMP}', nada a estornar.`);
+                    }
+                } catch (mpErr) {
+                    // Não impede o cancelamento local, mas deixa claro no log pra conferir no painel do MP
+                    console.error(`❌ Erro na API do Mercado Pago (pedido ${id_pedido}) — cancelando localmente mesmo assim:`, mpErr.response?.data || mpErr.message);
+                }
+            } else {
+                console.log(`ℹ️ Pedido ${id_pedido} cancelado sem estorno online (sem mp_payment_id, valor zero ou não é Pix).`);
+            }
+        }
+
+        // 2. Atualiza o status no banco
+        if (mpStatusNovo) {
+            await executeQuery(
+                "UPDATE pedido SET status = ?, mp_status = ? WHERE id_pedido = ? AND id_estabelecimento = ?",
+                [status, mpStatusNovo, id_pedido, id_estabelecimento]
+            );
+        } else {
+            await executeQuery(
+                "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?",
+                [status, id_pedido, id_estabelecimento]
+            );
+        }
+
+        // 3. Finalizado ('F') e ainda NÃO estava finalizado: dá baixa no estoque
+        //    (produto vendido + insumos da ficha técnica — controles separados)
         if (status === 'F' && statusAnterior !== 'F') {
             try {
-                // Busca cada item do pedido
                 const sqlItens = `
                     SELECT pi.id_produto, pi.qtd AS qtd_item, p.unidade_medida
                     FROM pedido_item pi
@@ -1958,19 +2079,14 @@ const atualizarStatusPedido = async (req, res) => {
 
                 console.log(`[Baixa de estoque] Pedido ${id_pedido} (estab ${id_estabelecimento}): ${itens.length} item(ns) no pedido.`);
 
-                // 2a. Desconta o estoque do próprio produto vendido (ex: -1 no qtd do X-Frango)
                 for (const item of itens) {
-                    const sqlBaixaProduto = `
-                        UPDATE produto 
-                        SET qtd = qtd - ? 
-                        WHERE id_produto = ? AND id_estabelecimento = ?
-                    `;
-                    const result = await executeQuery(sqlBaixaProduto, [item.qtd_item, item.id_produto, id_estabelecimento]);
+                    const result = await executeQuery(
+                        `UPDATE produto SET qtd = qtd - ? WHERE id_produto = ? AND id_estabelecimento = ?`,
+                        [item.qtd_item, item.id_produto, id_estabelecimento]
+                    );
                     console.log(`[Baixa de estoque] produto ${item.id_produto}: -${item.qtd_item} (linhas afetadas: ${result.affectedRows})`);
                 }
 
-                // 2b. Desconta cada insumo da ficha técnica dos produtos vendidos
-                //     (ex: X-Frango consome 0.1 KG de Frango Desfiado por venda)
                 const sqlInsumos = `
                     SELECT i.id_produto, i.id_insumo, i.qtd_consumida, pi.qtd AS qtd_item
                     FROM pedido_item pi
@@ -1982,28 +2098,20 @@ const atualizarStatusPedido = async (req, res) => {
 
                 console.log(`[Baixa de estoque] ${insumos.length} insumo(s) encontrado(s) na ficha técnica do pedido.`);
 
-                if (insumos.length === 0) {
-                    console.warn(`[Baixa de estoque] Nenhum insumo vinculado aos produtos deste pedido. Verifique se os produtos possuem ficha técnica cadastrada (produto_ficha_tecnica) para id_estabelecimento=${id_estabelecimento}.`);
-                }
-
                 for (const insumo of insumos) {
                     const totalConsumido = insumo.qtd_item * insumo.qtd_consumida;
-                    const sqlBaixaInsumo = `
-                        UPDATE insumo 
-                        SET qtd_atual = qtd_atual - ? 
-                        WHERE id_insumo = ? AND id_estabelecimento = ?
-                    `;
-                    const result = await executeQuery(sqlBaixaInsumo, [totalConsumido, insumo.id_insumo, id_estabelecimento]);
+                    const result = await executeQuery(
+                        `UPDATE insumo SET qtd_atual = qtd_atual - ? WHERE id_insumo = ? AND id_estabelecimento = ?`,
+                        [totalConsumido, insumo.id_insumo, id_estabelecimento]
+                    );
                     console.log(`[Baixa de estoque] insumo ${insumo.id_insumo}: -${totalConsumido} (linhas afetadas: ${result.affectedRows})`);
                 }
             } catch (stockError) {
                 console.error("[Baixa de estoque] ERRO ao dar baixa:", stockError.message, stockError.stack);
             }
-        } else if (status === 'F' && statusAnterior === 'F') {
-            console.log(`[Baixa de estoque] Pedido ${id_pedido} já estava finalizado — ignorando baixa duplicada.`);
         }
 
-        return res.json({ message: "Status do pedido atualizado com sucesso!" });
+        return res.json({ sucesso: true, message: "Status do pedido atualizado com sucesso!" });
 
     } catch (error) {
         console.error("Erro ao atualizar status do pedido:", error);
@@ -2011,65 +2119,10 @@ const atualizarStatusPedido = async (req, res) => {
     }
 };
 
-// Registra a rota para aceitar tanto POST quanto PUT (evita erro 404)
+// O Delphi usa PUT; POST mantido por compatibilidade. Mesmo handler nos dois.
 app.post('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
+app.put('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
 
-
-app.put('/pedidos/status/:id_pedido', token.ValidateJWT, async function atualizarStatusPedido(req, res) {
-    const { id_pedido } = req.params;
-    const { status } = req.body;
-
-    try {
-        // 1. Se o status for 'C' (Cancelado), tentamos o estorno do Pix com segurança
-        if (status === 'C') {
-            try {
-                const pedidoArr = await executeQuery(
-                    "SELECT mp_payment_id, forma_pagamento, vl_total FROM pedido WHERE id_pedido = ?",
-                    [id_pedido]
-                );
-
-                if (pedidoArr.length > 0) {
-                    const pedido = pedidoArr[0];
-
-                    // Só tenta estornar se houver ID do MP, valor maior que zero e for Pix
-                    if (pedido.mp_payment_id && Number(pedido.vl_total) > 0 && pedido.forma_pagamento && pedido.forma_pagamento.toUpperCase().includes("PIX")) {
-                        await axios.post(
-                            `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}/refunds`,
-                            {},
-                            {
-                                headers: {
-                                    'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
-                                    'X-Idempotency-Key': `refund-pedido-${id_pedido}`
-                                }
-                            }
-                        );
-                        console.log(`✅ Pix do pedido ${id_pedido} estornado com sucesso!`);
-                    } else {
-                        console.log(`ℹ️ Pedido ${id_pedido} cancelado sem estorno online (Sem mp_payment_id ou não é Pix).`);
-                    }
-                }
-            } catch (mpErr) {
-                // Apenas logamos o erro do Mercado Pago para não impedir o cancelamento local do pedido
-                console.error("❌ Erro na API do Mercado Pago (prosseguindo com o cancelamento):", mpErr.response?.data || mpErr.message);
-            }
-        }
-
-        // 2. Atualiza OBRIGATORIAMENTE o status do pedido no banco de dados para 'C'
-        await executeQuery(
-            "UPDATE pedido SET status = ? WHERE id_pedido = ?",
-            [status, id_pedido]
-        );
-
-        return res.json({ 
-            sucesso: true, 
-            mensagem: "Status atualizado com sucesso!" 
-        });
-
-    } catch (err) {
-        console.error("❌ Erro geral ao atualizar status:", err);
-        return res.status(500).json({ erro: "Erro ao atualizar status do pedido" });
-    }
-});
 
 app.put('/produtos/ficha/:id_ficha', token.ValidateJWT, async (req, res) => {
     const { id_ficha } = req.params;
@@ -2521,7 +2574,9 @@ app.post("/pix/gerar", async (req, res) => {
 
         // Salva os dados do Pix na tabela pedido
         const sqlUpdate = "UPDATE pedido SET mp_payment_id = ?, mp_qr_code = ?, mp_status = ? WHERE id_pedido = ?";
-        db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido]);
+        if (id_pedido) {
+            db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido]);
+        }
 
         return res.status(200).json({
             id_pedido,
