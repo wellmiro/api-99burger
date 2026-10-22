@@ -2416,13 +2416,12 @@ function executeQuery(sql, params = []) {
 }
 
 // ==========================================
-// ROTAS DO MERCADO PAGO (PIX)
+// ROTAS DO MERCADO PAGO (PIX PÚBLICAS DO CARDÁPIO)
 // ==========================================
 
 // 1. ROTA PARA GERAR O PIX E SALVAR NO PEDIDO
-app.post("/pix/gerar", token.ValidateJWT, async function (req, res) {
+app.post("/pix/gerar", async function (req, res) {
     const { id_pedido, transaction_amount, description, payer } = req.body;
-    const id_estabelecimento = req.id_estabelecimento;
 
     if (!id_pedido || !transaction_amount || !payer?.email) {
         return res.status(400).json({ error: "id_pedido, transaction_amount e payer.email são obrigatórios." });
@@ -2465,10 +2464,10 @@ app.post("/pix/gerar", token.ValidateJWT, async function (req, res) {
         const sqlUpdate = `
             UPDATE pedido 
             SET mp_payment_id = ?, mp_qr_code = ?, mp_status = ? 
-            WHERE id_pedido = ? AND id_estabelecimento = ?
+            WHERE id_pedido = ?
         `;
 
-        db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido, id_estabelecimento], (err) => {
+        db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido], (err) => {
             if (err) {
                 console.error("Erro ao atualizar pedido com dados do MP:", err);
                 return res.status(500).json({ error: "Erro ao vincular Pix ao pedido no banco." });
@@ -2493,14 +2492,13 @@ app.post("/pix/gerar", token.ValidateJWT, async function (req, res) {
 });
 
 // 2. ROTA PARA CONSULTAR STATUS DO PIX
-app.get("/pix/status/:id_pedido", token.ValidateJWT, async function (req, res) {
+app.get("/pix/status/:id_pedido", async function (req, res) {
     const id_pedido = req.params.id_pedido;
-    const id_estabelecimento = req.id_estabelecimento;
 
     // Busca o mp_payment_id registrado no pedido
-    const sqlSelect = "SELECT mp_payment_id, mp_status FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?";
+    const sqlSelect = "SELECT mp_payment_id, mp_status FROM pedido WHERE id_pedido = ?";
 
-    db.query(sqlSelect, [id_pedido, id_estabelecimento], async (err, result) => {
+    db.query(sqlSelect, [id_pedido], async (err, result) => {
         if (err || result.length === 0) {
             return res.status(404).json({ error: "Pedido não localizado." });
         }
@@ -2526,8 +2524,8 @@ app.get("/pix/status/:id_pedido", token.ValidateJWT, async function (req, res) {
 
             // Se mudou para approved e no banco ainda não estava, atualiza o banco
             if (mp_status !== result[0].mp_status) {
-                const sqlUpdate = "UPDATE pedido SET mp_status = ? WHERE id_pedido = ? AND id_estabelecimento = ?";
-                db.query(sqlUpdate, [mp_status, id_pedido, id_estabelecimento]);
+                const sqlUpdate = "UPDATE pedido SET mp_status = ? WHERE id_pedido = ?";
+                db.query(sqlUpdate, [mp_status, id_pedido]);
             }
 
             return res.status(200).json({
