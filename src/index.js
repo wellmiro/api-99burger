@@ -2015,25 +2015,25 @@ const atualizarStatusPedido = async (req, res) => {
 app.post('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
 
 
-app.put('/pedidos/status/:id_pedido', token.ValidateJWT, async function (req, res) {
+app.put('/pedidos/status/:id_pedido', token.ValidateJWT, async function atualizarStatusPedido(req, res) {
     const { id_pedido } = req.params;
     const { status } = req.body;
 
     try {
-        // Se o status for 'C' (Cancelado), tentamos o estorno do Pix
+        // 1. Se o status for 'C' (Cancelado), tentamos o estorno do Pix com segurança
         if (status === 'C') {
-            const pedidoArr = await executeQuery(
-                "SELECT mp_payment_id, forma_pagamento FROM pedido WHERE id_pedido = ?",
-                [id_pedido]
-            );
+            try {
+                const pedidoArr = await executeQuery(
+                    "SELECT mp_payment_id, forma_pagamento, vl_total FROM pedido WHERE id_pedido = ?",
+                    [id_pedido]
+                );
 
-            if (pedidoArr.length > 0) {
-                const pedido = pedidoArr[0];
+                if (pedidoArr.length > 0) {
+                    const pedido = pedidoArr[0];
 
-                // Verifica se tem o ID do pagamento e se foi pago via Pix
-                if (pedido.mp_payment_id && pedido.forma_pagamento && pedido.forma_pagamento.toUpperCase().includes("PIX")) {
-                    try {
-                        const respostaMp = await axios.post(
+                    // Só tenta estornar se houver ID do MP, valor maior que zero e for Pix
+                    if (pedido.mp_payment_id && Number(pedido.vl_total) > 0 && pedido.forma_pagamento && pedido.forma_pagamento.toUpperCase().includes("PIX")) {
+                        await axios.post(
                             `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}/refunds`,
                             {},
                             {
@@ -2043,23 +2043,27 @@ app.put('/pedidos/status/:id_pedido', token.ValidateJWT, async function (req, re
                                 }
                             }
                         );
-                        console.log(`✅ Pix do pedido ${id_pedido} estornado com sucesso!`, respostaMp.data);
-                    } catch (mpErr) {
-                        console.error("❌ Erro na API do Mercado Pago ao estornar:", mpErr.response?.data || mpErr.message);
+                        console.log(`✅ Pix do pedido ${id_pedido} estornado com sucesso!`);
+                    } else {
+                        console.log(`ℹ️ Pedido ${id_pedido} cancelado sem estorno online (Sem mp_payment_id ou não é Pix).`);
                     }
-                } else {
-                    console.log(`ℹ️ Pedido ${id_pedido} cancelado, mas não possui mp_payment_id válido para estorno automático (Pix).`);
                 }
+            } catch (mpErr) {
+                // Apenas logamos o erro do Mercado Pago para não impedir o cancelamento local do pedido
+                console.error("❌ Erro na API do Mercado Pago (prosseguindo com o cancelamento):", mpErr.response?.data || mpErr.message);
             }
         }
 
-        // Atualiza o status no banco para 'C'
+        // 2. Atualiza OBRIGATORIAMENTE o status do pedido no banco de dados para 'C'
         await executeQuery(
             "UPDATE pedido SET status = ? WHERE id_pedido = ?",
             [status, id_pedido]
         );
 
-        return res.json({ sucesso: true, mensagem: "Status atualizado com sucesso!" });
+        return res.json({ 
+            sucesso: true, 
+            mensagem: "Status atualizado com sucesso!" 
+        });
 
     } catch (err) {
         console.error("❌ Erro geral ao atualizar status:", err);
