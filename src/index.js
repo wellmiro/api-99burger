@@ -1812,13 +1812,18 @@ app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
 app.post('/pedidos/publico', async (req, res) => {
     const p = req.body;
 
+    // 🛑 Trava de segurança: Bloqueia carrinhos vazios, sem itens ou com valor zero
+    if (!p.itens || p.itens.length === 0 || !p.vl_total || Number(p.vl_total) <= 0) {
+        return res.status(400).json({ error: 'Pedido inválido: O carrinho está vazio ou o valor total é zero.' });
+    }
+
     // Validação básica
     if (!p.slug) {
         return res.status(400).json({ error: 'Slug do estabelecimento é obrigatório' });
     }
 
-    if (!p.nome_cliente || !p.itens || p.itens.length === 0) {
-        return res.status(400).json({ error: 'Nome do cliente e itens são obrigatórios' });
+    if (!p.nome_cliente) {
+        return res.status(400).json({ error: 'Nome do cliente é obrigatório' });
     }
 
     try {
@@ -1842,10 +1847,10 @@ app.post('/pedidos/publico', async (req, res) => {
         agora.setHours(agora.getHours() - 3);
         const dtPedidoBrasilia = agora.toISOString().slice(0, 19).replace('T', ' ');
 
-        // 🔥 NOVO: session_id vindo do frontend
+        // 🔥 session_id vindo do frontend
         const session_id = p.session_id || null;
 
-        // 3. INSERT (🔥 SÓ ADICIONEI session_id)
+        // 3. INSERT do Pedido
         const result = await new Promise((resolve, reject) => {
             db.query(
                 `INSERT INTO pedido 
@@ -1869,7 +1874,7 @@ app.post('/pedidos/publico', async (req, res) => {
                     p.local_consumo || 'DELIVERY',
                     p.dinheiro || 0,
                     p.troco || 0,
-                    session_id // 🔥 AQUI
+                    session_id
                 ],
                 (err, res) => err ? reject(err) : resolve(res)
             );
