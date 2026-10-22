@@ -2416,35 +2416,42 @@ function executeQuery(sql, params = []) {
     });
 }
 
-// ==========================================
-// ROTAS DO MERCADO PAGO (PIX PÚBLICAS DO CARDÁPIO)
-// ==========================================
-
-// 1. ROTA PARA GERAR O PIX E SALVAR NO PEDIDO
-app.post("/pix/gerar", async function (req, res) {
-    const { id_pedido, transaction_amount, description, payer } = req.body;
-
-    if (!id_pedido || !transaction_amount || !payer?.email) {
-        return res.status(400).json({ error: "id_pedido, transaction_amount e payer.email são obrigatórios." });
-    }
-
+app.post("/pix/gerar", async (req, res) => {
     try {
-        // Faz a requisição direto para a API do Mercado Pago
+        const { id_pedido, transaction_amount, description, payer } = req.body;
+
+        // Trata o nome do cliente (se vier nome completo, separa primeiro e ultimo nome)
+        const nomeCompleto = (payer?.first_name || 'Cliente').trim();
+        const partesNome = nomeCompleto.split(" ");
+        const primeironome = partesNome[0] || 'Cliente';
+        const sobrenome = partesNome.slice(1).join(" ") || ' ';
+
+        // Monta o objeto de pagador básico
+        const payerData = {
+            email: payer?.email || 'cliente@99burger.com',
+            first_name: primeironome,
+            last_name: sobrenome
+        };
+
+        // Trata o CPF do cliente: se enviado e com 11 dígitos, insere no payload do Mercado Pago
+        const cpfInformado = payer?.cpf || payer?.identification?.number;
+        if (cpfInformado) {
+            const cpfLimpo = String(cpfInformado).replace(/\D/g, "");
+            if (cpfLimpo.length === 11) {
+                payerData.identification = {
+                    type: 'CPF',
+                    number: cpfLimpo
+                };
+            }
+        }
+
         const responseMP = await axios.post(
             'https://api.mercadopago.com/v1/payments',
             {
-                transaction_amount: parseFloat(transaction_amount),
+                transaction_amount: Number(transaction_amount),
                 description: description || `Pedido #${id_pedido}`,
                 payment_method_id: 'pix',
-                payer: {
-                    email: payer.email,
-                    first_name: payer.first_name || 'Cliente',
-                    last_name: payer.last_name || '',
-                    identification: {
-                        type: payer.identification?.type || 'CPF',
-                        number: payer.identification?.number || '00000000000'
-                    }
-                }
+                payer: payerData
             },
             {
                 headers: {
@@ -2456,38 +2463,28 @@ app.post("/pix/gerar", async function (req, res) {
         );
 
         const paymentData = responseMP.data;
-        const mp_payment_id = String(paymentData.id);
-        const mp_qr_code = paymentData.point_of_interaction?.transaction_data?.qr_code || '';
-        const mp_qr_code_base64 = paymentData.point_of_interaction?.transaction_data?.qr_code_base64 || '';
-        const mp_status = paymentData.status || 'pending';
+        const mp_payment_id = paymentData.id;
+        const mp_qr_code = paymentData.point_of_interaction.transaction_data.qr_code;
+        const mp_qr_code_base64 = paymentData.point_of_interaction.transaction_data.qr_code_base64;
+        const mp_status = paymentData.status;
 
-        // Atualiza o pedido com os dados do Pix no MySQL
-        const sqlUpdate = `
-            UPDATE pedido 
-            SET mp_payment_id = ?, mp_qr_code = ?, mp_status = ? 
-            WHERE id_pedido = ?
-        `;
+        // Salva os dados do Pix na tabela pedido
+        const sqlUpdate = "UPDATE pedido SET mp_payment_id = ?, mp_qr_code = ?, mp_status = ? WHERE id_pedido = ?";
+        db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido]);
 
-        db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido], (err) => {
-            if (err) {
-                console.error("Erro ao atualizar pedido com dados do MP:", err);
-                return res.status(500).json({ error: "Erro ao vincular Pix ao pedido no banco." });
-            }
-
-            return res.status(200).json({
-                id_pedido,
-                mp_payment_id,
-                mp_qr_code,
-                mp_qr_code_base64,
-                mp_status
-            });
+        return res.status(200).json({
+            id_pedido,
+            mp_payment_id,
+            mp_qr_code,
+            mp_qr_code_base64,
+            mp_status
         });
 
     } catch (error) {
-        console.error("Erro ao gerar Pix no Mercado Pago:", error.response?.data || error.message);
+        console.error("Erro no Mercado Pago:", error.response?.data || error.message);
         return res.status(500).json({ 
-            error: "Falha ao gerar o Pix junto ao Mercado Pago.",
-            details: error.response?.data || error.message
+            error: "Erro ao gerar PIX no Mercado Pago.",
+            detalhes: error.response?.data || error.message 
         });
     }
 });
