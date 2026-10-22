@@ -2013,17 +2013,60 @@ const atualizarStatusPedido = async (req, res) => {
 
 // Registra a rota para aceitar tanto POST quanto PUT (evita erro 404)
 app.post('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
-app.put('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
 
-// Helper para converter o db.query em Promise (async/await)
-function executeQuery(sql, params = []) {
-    return new Promise((resolve, reject) => {
-        db.query(sql, params, (err, results) => {
-            if (err) return reject(err);
-            resolve(results);
+
+app.put('/pedidos/status/:id_pedido', token.ValidateJWT, async function atualizarStatusPedido(req, res) {
+    const { id_pedido } = req.params;
+    const { status } = req.body;
+
+    try {
+        // 1. Se o status enviado for 'C' (Cancelado/Recusado), verificamos se existe pagamento Pix para estornar
+        if (status === 'C') {
+            const pedidoArr = await executeQuery(
+                "SELECT mp_payment_id, forma_pagamento FROM pedido WHERE id_pedido = ?",
+                [id_pedido]
+            );
+
+            if (pedidoArr.length > 0) {
+                const pedido = pedidoArr[0];
+
+                // Se tiver o ID do Mercado Pago e for Pix, chama a API oficial de reembolso
+                if (pedido.mp_payment_id && pedido.forma_pagamento && pedido.forma_pagamento.includes("PIX")) {
+                    try {
+                        await axios.post(
+                            `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}/refunds`,
+                            {}, // Corpo vazio faz o estorno total do valor
+                            {
+                                headers: {
+                                    'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+                                    'X-Idempotency-Key': `refund-pedido-${id_pedido}`
+                                }
+                            }
+                        );
+                        console.log(`Pix do pedido ${id_pedido} estornado com sucesso no Mercado Pago!`);
+                    } catch (mpErr) {
+                        console.error("Erro ao estornar Pix no MP (prosseguindo com o cancelamento local):", mpErr.response?.data || mpErr.message);
+                    }
+                }
+            }
+        }
+
+        // 2. Atualiza o status do pedido no banco de dados para o novo estado (ex: 'C')
+        await executeQuery(
+            "UPDATE pedido SET status = ? WHERE id_pedido = ?",
+            [status, id_pedido]
+        );
+
+        return res.json({ 
+            sucesso: true, 
+            mensagem: "Status atualizado e estorno processado com sucesso!" 
         });
-    });
-}
+
+    } catch (err) {
+        console.error("❌ Erro ao atualizar status do pedido:", err);
+        return res.status(500).json({ erro: "Erro ao atualizar status do pedido" });
+    }
+});
 
 app.put('/produtos/ficha/:id_ficha', token.ValidateJWT, async (req, res) => {
     const { id_ficha } = req.params;
