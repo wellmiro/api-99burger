@@ -2489,55 +2489,37 @@ app.post("/pix/gerar", async (req, res) => {
     }
 });
 
-// 2. ROTA PARA CONSULTAR STATUS DO PIX
-app.get("/pix/status/:id_pedido", async function (req, res) {
-    const id_pedido = req.params.id_pedido;
+// 2. ROTA PARA CONSULTAR STATUS DO PIX DIRETAMENTE NO MERCADO PAGO
+app.get("/pix/status/:payment_id", async function (req, res) {
+    const payment_id = req.params.payment_id;
 
-    // Busca o mp_payment_id registrado no pedido
-    const sqlSelect = "SELECT mp_payment_id, mp_status FROM pedido WHERE id_pedido = ?";
+    if (!payment_id || payment_id === "null" || payment_id === "undefined") {
+        return res.status(400).json({ error: "ID de pagamento inválido." });
+    }
 
-    db.query(sqlSelect, [id_pedido], async (err, result) => {
-        if (err || result.length === 0) {
-            return res.status(404).json({ error: "Pedido não localizado." });
-        }
-
-        const mp_payment_id = result[0].mp_payment_id;
-
-        if (!mp_payment_id) {
-            return res.status(400).json({ error: "Este pedido não possui cobrança Pix associada." });
-        }
-
-        try {
-            // Consulta a API do Mercado Pago
-            const responseMP = await axios.get(
-                `https://api.mercadopago.com/v1/payments/${mp_payment_id}`,
-                {
-                    headers: {
-                        'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`
-                    }
+    try {
+        // Consulta a API do Mercado Pago usando o payment_id do cache/frontend
+        const responseMP = await axios.get(
+            `https://api.mercadopago.com/v1/payments/${payment_id}`,
+            {
+                headers: {
+                    'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`
                 }
-            );
-
-            const mp_status = responseMP.data.status;
-
-            // Se mudou para approved e no banco ainda não estava, atualiza o banco
-            if (mp_status !== result[0].mp_status) {
-                const sqlUpdate = "UPDATE pedido SET mp_status = ? WHERE id_pedido = ?";
-                db.query(sqlUpdate, [mp_status, id_pedido]);
             }
+        );
 
-            return res.status(200).json({
-                id_pedido,
-                mp_payment_id,
-                status: mp_status,
-                pago: mp_status === 'approved'
-            });
+        const mp_status = responseMP.data.status;
 
-        } catch (error) {
-            console.error("Erro ao consultar Pix no Mercado Pago:", error.response?.data || error.message);
-            return res.status(500).json({ error: "Erro ao consultar status no Mercado Pago." });
-        }
-    });
+        return res.status(200).json({
+            mp_payment_id: payment_id,
+            status: mp_status,
+            pago: mp_status === 'approved'
+        });
+
+    } catch (error) {
+        console.error("Erro ao consultar Pix no Mercado Pago:", error.response?.data || error.message);
+        return res.status(500).json({ error: "Erro ao consultar status no Mercado Pago." });
+    }
 });
 
 
