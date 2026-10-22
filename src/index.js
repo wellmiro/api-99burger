@@ -2415,6 +2415,135 @@ function executeQuery(sql, params = []) {
     });
 }
 
+// ==========================================
+// ROTAS DO MERCADO PAGO (PIX)
+// ==========================================
+
+// 1. ROTA PARA GERAR O PIX E SALVAR NO PEDIDO
+app.post("/pix/gerar", token.ValidateJWT, async function (req, res) {
+    const { id_pedido, transaction_amount, description, payer } = req.body;
+    const id_estabelecimento = req.id_estabelecimento;
+
+    if (!id_pedido || !transaction_amount || !payer?.email) {
+        return res.status(400).json({ error: "id_pedido, transaction_amount e payer.email são obrigatórios." });
+    }
+
+    try {
+        // Faz a requisição direto para a API do Mercado Pago
+        const responseMP = await axios.post(
+            'https://api.mercadopago.com/v1/payments',
+            {
+                transaction_amount: parseFloat(transaction_amount),
+                description: description || `Pedido #${id_pedido}`,
+                payment_method_id: 'pix',
+                payer: {
+                    email: payer.email,
+                    first_name: payer.first_name || 'Cliente',
+                    last_name: payer.last_name || '',
+                    identification: {
+                        type: payer.identification?.type || 'CPF',
+                        number: payer.identification?.number || '00000000000'
+                    }
+                }
+            },
+            {
+                headers: {
+                    'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+                    'X-Idempotency-Key': `pedido_${id_pedido}_${Date.now()}`,
+                    'Content-Type': 'application/json'
+                }
+            }
+        );
+
+        const paymentData = responseMP.data;
+        const mp_payment_id = String(paymentData.id);
+        const mp_qr_code = paymentData.point_of_interaction?.transaction_data?.qr_code || '';
+        const mp_qr_code_base64 = paymentData.point_of_interaction?.transaction_data?.qr_code_base64 || '';
+        const mp_status = paymentData.status || 'pending';
+
+        // Atualiza o pedido com os dados do Pix no MySQL
+        const sqlUpdate = `
+            UPDATE pedido 
+            SET mp_payment_id = ?, mp_qr_code = ?, mp_status = ? 
+            WHERE id_pedido = ? AND id_estabelecimento = ?
+        `;
+
+        db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido, id_estabelecimento], (err) => {
+            if (err) {
+                console.error("Erro ao atualizar pedido com dados do MP:", err);
+                return res.status(500).json({ error: "Erro ao vincular Pix ao pedido no banco." });
+            }
+
+            return res.status(200).json({
+                id_pedido,
+                mp_payment_id,
+                mp_qr_code,
+                mp_qr_code_base64,
+                mp_status
+            });
+        });
+
+    } catch (error) {
+        console.error("Erro ao gerar Pix no Mercado Pago:", error.response?.data || error.message);
+        return res.status(500).json({ 
+            error: "Falha ao gerar o Pix junto ao Mercado Pago.",
+            details: error.response?.data || error.message
+        });
+    }
+});
+
+// 2. ROTA PARA CONSULTAR STATUS DO PIX
+app.get("/pix/status/:id_pedido", token.ValidateJWT, async function (req, res) {
+    const id_pedido = req.params.id_pedido;
+    const id_estabelecimento = req.id_estabelecimento;
+
+    // Busca o mp_payment_id registrado no pedido
+    const sqlSelect = "SELECT mp_payment_id, mp_status FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?";
+
+    db.query(sqlSelect, [id_pedido, id_estabelecimento], async (err, result) => {
+        if (err || result.length === 0) {
+            return res.status(404).json({ error: "Pedido não localizado." });
+        }
+
+        const mp_payment_id = result[0].mp_payment_id;
+
+        if (!mp_payment_id) {
+            return res.status(400).json({ error: "Este pedido não possui cobrança Pix associada." });
+        }
+
+        try {
+            // Consulta a API do Mercado Pago
+            const responseMP = await axios.get(
+                `https://api.mercadopago.com/v1/payments/${mp_payment_id}`,
+                {
+                    headers: {
+                        'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`
+                    }
+                }
+            );
+
+            const mp_status = responseMP.data.status;
+
+            // Se mudou para approved e no banco ainda não estava, atualiza o banco
+            if (mp_status !== result[0].mp_status) {
+                const sqlUpdate = "UPDATE pedido SET mp_status = ? WHERE id_pedido = ? AND id_estabelecimento = ?";
+                db.query(sqlUpdate, [mp_status, id_pedido, id_estabelecimento]);
+            }
+
+            return res.status(200).json({
+                id_pedido,
+                mp_payment_id,
+                status: mp_status,
+                pago: mp_status === 'approved'
+            });
+
+        } catch (error) {
+            console.error("Erro ao consultar Pix no Mercado Pago:", error.response?.data || error.message);
+            return res.status(500).json({ error: "Erro ao consultar status no Mercado Pago." });
+        }
+    });
+});
+
 
 async function recalcularEstoqueProduto(id_produto, id_estabelecimento) {
     const sql = `
@@ -2448,3 +2577,5 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
 });
+
+//versão de manda pix
