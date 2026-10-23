@@ -2522,22 +2522,43 @@ function executeQuery(sql, params = []) {
 
 app.post("/pix/gerar", async (req, res) => {
     try {
-        const { id_pedido, transaction_amount, description, payer } = req.body;
+        const { id_pedido, slug, id_estabelecimento, transaction_amount, description, payer } = req.body;
 
-        // Trata o nome do cliente (se vier nome completo, separa primeiro e ultimo nome)
+        // 1. Busca dinamicamente o token da loja no banco pelo slug ou id
+        let tokenMP = null;
+        if (slug || id_estabelecimento) {
+            const estab = await executeQuery(
+                "SELECT mp_access_token FROM estabelecimento WHERE slug = ? OR id_estabelecimento = ? LIMIT 1",
+                [slug || '', id_estabelecimento || 0]
+            );
+            if (estab.length > 0 && estab[0].mp_access_token) {
+                tokenMP = estab[0].mp_access_token;
+            }
+        }
+
+        // 2. Se a loja ainda não tiver token no banco, usa o .env como plano B
+        if (!tokenMP) {
+            tokenMP = process.env.MP_ACCESS_TOKEN;
+        }
+
+        if (!tokenMP) {
+            return res.status(400).json({ 
+                error: "Estabelecimento sem credencial do Mercado Pago configurada." 
+            });
+        }
+
+        // 3. Trata os dados do pagador
         const nomeCompleto = (payer?.first_name || 'Cliente').trim();
         const partesNome = nomeCompleto.split(" ");
         const primeironome = partesNome[0] || 'Cliente';
         const sobrenome = partesNome.slice(1).join(" ") || ' ';
 
-        // Monta o objeto de pagador básico
         const payerData = {
             email: payer?.email || 'cliente@99burger.com',
             first_name: primeironome,
             last_name: sobrenome
         };
 
-        // Trata o CPF do cliente: se enviado e com 11 dígitos, insere no payload do Mercado Pago
         const cpfInformado = payer?.cpf || payer?.identification?.number;
         if (cpfInformado) {
             const cpfLimpo = String(cpfInformado).replace(/\D/g, "");
@@ -2549,6 +2570,7 @@ app.post("/pix/gerar", async (req, res) => {
             }
         }
 
+        // 4. Cria o Pix no Mercado Pago com a chave específica da lanchonete
         const responseMP = await axios.post(
             'https://api.mercadopago.com/v1/payments',
             {
@@ -2559,7 +2581,7 @@ app.post("/pix/gerar", async (req, res) => {
             },
             {
                 headers: {
-                    'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+                    'Authorization': `Bearer ${tokenMP}`,
                     'X-Idempotency-Key': `pedido_${id_pedido}_${Date.now()}`,
                     'Content-Type': 'application/json'
                 }
@@ -2572,7 +2594,7 @@ app.post("/pix/gerar", async (req, res) => {
         const mp_qr_code_base64 = paymentData.point_of_interaction.transaction_data.qr_code_base64;
         const mp_status = paymentData.status;
 
-        // Salva os dados do Pix na tabela pedido
+        // 5. Salva os dados do Pix gerado no pedido
         const sqlUpdate = "UPDATE pedido SET mp_payment_id = ?, mp_qr_code = ?, mp_status = ? WHERE id_pedido = ?";
         if (id_pedido) {
             db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido]);
@@ -2604,12 +2626,31 @@ app.get("/pix/status/:payment_id", async function (req, res) {
     }
 
     try {
-        // Consulta a API do Mercado Pago usando o payment_id do cache/frontend
+        // 1. Descobre de qual loja é esse pagamento para pegar o token dela
+        let tokenMP = null;
+        const rows = await executeQuery(
+            `SELECT e.mp_access_token 
+             FROM pedido p 
+             INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento 
+             WHERE p.mp_payment_id = ? LIMIT 1`,
+            [payment_id]
+        );
+
+        if (rows.length > 0 && rows[0].mp_access_token) {
+            tokenMP = rows[0].mp_access_token;
+        }
+
+        // Se ainda não tiver token no banco, usa o .env como reserva
+        if (!tokenMP) {
+            tokenMP = process.env.MP_ACCESS_TOKEN;
+        }
+
+        // 2. Consulta no Mercado Pago com a chave da própria loja
         const responseMP = await axios.get(
             `https://api.mercadopago.com/v1/payments/${payment_id}`,
             {
                 headers: {
-                    'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`
+                    'Authorization': `Bearer ${tokenMP}`
                 }
             }
         );
@@ -2631,8 +2672,12 @@ app.get("/pix/status/:payment_id", async function (req, res) {
 app.post("/pix/reembolsar", async function (req, res) {
     const { id_pedido } = req.body;
 
-    // 1. Busca o mp_payment_id e o status atual do pedido no banco
-    const sqlSelect = "SELECT mp_payment_id, status, forma_pagamento FROM pedido WHERE id_pedido = ?";
+    // 1. Busca os dados do pedido junto com o token da loja dona dele
+    const sqlSelect = `
+        SELECT p.mp_payment_id, p.status, p.forma_pagamento, e.mp_access_token 
+        FROM pedido p
+        INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+        WHERE p.id_pedido = ?`;
     
     db.query(sqlSelect, [id_pedido], async (err, result) => {
         if (err || result.length === 0) {
@@ -2641,20 +2686,22 @@ app.post("/pix/reembolsar", async function (req, res) {
 
         const pedido = result[0];
 
-        // Valida se o pedido foi pago via Pix e possui ID de pagamento
         if (!pedido.mp_payment_id || !pedido.forma_pagamento.includes("PIX")) {
             return res.status(400).json({ error: "Este pedido não possui um pagamento Pix online associado para estornar." });
         }
 
+        // Pega o token da loja ou o do .env como fallback
+        const tokenMP = pedido.mp_access_token || process.env.MP_ACCESS_TOKEN;
+
         try {
-            // 2. Chama a API de Refund (Reembolso) do Mercado Pago
+            // 2. Chama a API de estorno do Mercado Pago com a chave da loja
             const responseMP = await axios.post(
                 `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}/refunds`,
-                {}, // Corpo vazio faz o estorno total do valor
+                {}, 
                 {
                     headers: {
-                        'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}`,
-                        'X-Idempotency-Key': `refund-pedido-${id_pedido}` // Evita duplicação acidental
+                        'Authorization': `Bearer ${tokenMP}`,
+                        'X-Idempotency-Key': `refund-pedido-${id_pedido}`
                     }
                 }
             );
