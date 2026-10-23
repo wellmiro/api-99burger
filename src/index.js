@@ -1971,9 +1971,6 @@ app.post('/pedidos/publico', async (req, res) => {
 });
 
 
-// Função ÚNICA para atualizar o status do pedido (usada por PUT e POST).
-// Antes existiam dois handlers: o PUT (que o Delphi usa) tinha estorno mas NÃO dava baixa
-// no estoque, e o POST dava baixa mas não estornava.
 const atualizarStatusPedido = async (req, res) => {
     const { id_pedido } = req.params;
     let { status } = req.body;
@@ -1986,11 +1983,12 @@ const atualizarStatusPedido = async (req, res) => {
     status = String(status).toUpperCase();
 
     try {
-        // 0. Busca o pedido ATUAL (status anterior + dados do Pix)
+        // 0. Busca o pedido ATUAL + o token do Mercado Pago da loja dona dele
         const pedidoArr = await executeQuery(
-            `SELECT status, mp_payment_id, forma_pagamento, vl_total
-               FROM pedido
-              WHERE id_pedido = ? AND id_estabelecimento = ?`,
+            `SELECT p.status, p.mp_payment_id, p.forma_pagamento, p.vl_total, e.mp_access_token
+               FROM pedido p
+               INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+              WHERE p.id_pedido = ? AND p.id_estabelecimento = ?`,
             [id_pedido, id_estabelecimento]
         );
 
@@ -2007,13 +2005,15 @@ const atualizarStatusPedido = async (req, res) => {
             return res.json({ sucesso: true, message: "Status já estava atualizado." });
         }
 
-        // 1. CANCELADO: devolve o dinheiro do Pix (se pago) ou cancela a cobrança (se ainda pendente)
+        // 1. CANCELADO: devolve o dinheiro do Pix (se pago) ou cancela a cobrança (se pendente)
         let mpStatusNovo = null;
         if (status === 'C') {
             const ehPix = pedido.forma_pagamento && pedido.forma_pagamento.toUpperCase().includes("PIX");
 
             if (pedido.mp_payment_id && Number(pedido.vl_total) > 0 && ehPix) {
-                const headersMP = { 'Authorization': `Bearer ${process.env.MP_ACCESS_TOKEN}` };
+                // Pega o token da loja gravado no banco ou o .env como plano B
+                const tokenMP = pedido.mp_access_token || process.env.MP_ACCESS_TOKEN;
+                const headersMP = { 'Authorization': `Bearer ${tokenMP}` };
 
                 try {
                     const consulta = await axios.get(
@@ -2029,25 +2029,21 @@ const atualizarStatusPedido = async (req, res) => {
                             { headers: { ...headersMP, 'X-Idempotency-Key': `refund-pedido-${id_pedido}` } }
                         );
                         mpStatusNovo = 'refunded';
-                        console.log(`✅ Pix do pedido ${id_pedido} estornado com sucesso!`);
+                        console.log(`✅ Pix do pedido ${id_pedido} estornado com sucesso usando a conta da loja!`);
                     } else if (statusMP === 'pending' || statusMP === 'in_process') {
-                        // Cliente ainda não pagou: cancela a cobrança pra ele não conseguir pagar depois
                         await axios.put(
                             `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}`,
                             { status: 'cancelled' },
                             { headers: headersMP }
                         );
                         mpStatusNovo = 'cancelled';
-                        console.log(`🚫 Cobrança Pix do pedido ${id_pedido} cancelada (ainda não estava paga).`);
+                        console.log(`🚫 Cobrança Pix do pedido ${id_pedido} cancelada no Mercado Pago.`);
                     } else {
                         console.log(`ℹ️ Pedido ${id_pedido}: pagamento MP está '${statusMP}', nada a estornar.`);
                     }
                 } catch (mpErr) {
-                    // Não impede o cancelamento local, mas deixa claro no log pra conferir no painel do MP
-                    console.error(`❌ Erro na API do Mercado Pago (pedido ${id_pedido}) — cancelando localmente mesmo assim:`, mpErr.response?.data || mpErr.message);
+                    console.error(`❌ Erro na API do Mercado Pago (pedido ${id_pedido}):`, mpErr.response?.data || mpErr.message);
                 }
-            } else {
-                console.log(`ℹ️ Pedido ${id_pedido} cancelado sem estorno online (sem mp_payment_id, valor zero ou não é Pix).`);
             }
         }
 
@@ -2065,7 +2061,6 @@ const atualizarStatusPedido = async (req, res) => {
         }
 
         // 3. Finalizado ('F') e ainda NÃO estava finalizado: dá baixa no estoque
-        //    (produto vendido + insumos da ficha técnica — controles separados)
         if (status === 'F' && statusAnterior !== 'F') {
             try {
                 const sqlItens = `
@@ -2077,14 +2072,11 @@ const atualizarStatusPedido = async (req, res) => {
                 `;
                 const itens = await executeQuery(sqlItens, [id_pedido, id_estabelecimento]);
 
-                console.log(`[Baixa de estoque] Pedido ${id_pedido} (estab ${id_estabelecimento}): ${itens.length} item(ns) no pedido.`);
-
                 for (const item of itens) {
-                    const result = await executeQuery(
+                    await executeQuery(
                         `UPDATE produto SET qtd = qtd - ? WHERE id_produto = ? AND id_estabelecimento = ?`,
                         [item.qtd_item, item.id_produto, id_estabelecimento]
                     );
-                    console.log(`[Baixa de estoque] produto ${item.id_produto}: -${item.qtd_item} (linhas afetadas: ${result.affectedRows})`);
                 }
 
                 const sqlInsumos = `
@@ -2096,18 +2088,15 @@ const atualizarStatusPedido = async (req, res) => {
                 `;
                 const insumos = await executeQuery(sqlInsumos, [id_pedido, id_estabelecimento]);
 
-                console.log(`[Baixa de estoque] ${insumos.length} insumo(s) encontrado(s) na ficha técnica do pedido.`);
-
                 for (const insumo of insumos) {
                     const totalConsumido = insumo.qtd_item * insumo.qtd_consumida;
-                    const result = await executeQuery(
+                    await executeQuery(
                         `UPDATE insumo SET qtd_atual = qtd_atual - ? WHERE id_insumo = ? AND id_estabelecimento = ?`,
                         [totalConsumido, insumo.id_insumo, id_estabelecimento]
                     );
-                    console.log(`[Baixa de estoque] insumo ${insumo.id_insumo}: -${totalConsumido} (linhas afetadas: ${result.affectedRows})`);
                 }
             } catch (stockError) {
-                console.error("[Baixa de estoque] ERRO ao dar baixa:", stockError.message, stockError.stack);
+                console.error("[Baixa de estoque] ERRO ao dar baixa:", stockError.message);
             }
         }
 
@@ -2121,6 +2110,7 @@ const atualizarStatusPedido = async (req, res) => {
 
 // O Delphi usa PUT; POST mantido por compatibilidade. Mesmo handler nos dois.
 app.post('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
+
 app.put('/pedidos/status/:id_pedido', token.ValidateJWT, atualizarStatusPedido);
 
 
