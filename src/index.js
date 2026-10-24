@@ -1519,6 +1519,49 @@ app.post('/notificacoes/publico', async (req, res) => {
         }
     }
 
+    // 🔒 Trava: pedido Pix só gera notificação (alarme no Delphi) se o pagamento estiver APROVADO
+    if (id_pedido) {
+        try {
+            const ped = await executeQuery(
+                `SELECT p.mp_payment_id, p.forma_pagamento, e.mp_access_token
+                   FROM pedido p
+                   INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+                  WHERE p.id_pedido = ? AND p.id_estabelecimento = ?
+                  LIMIT 1`,
+                [id_pedido, id_estabelecimento]
+            );
+
+            if (ped.length > 0) {
+                const pedido = ped[0];
+                const ehPix = pedido.forma_pagamento && pedido.forma_pagamento.toUpperCase().includes('PIX');
+
+                if (ehPix && pedido.mp_payment_id) {
+                    const tokenMP = pedido.mp_access_token || process.env.MP_ACCESS_TOKEN;
+                    const consulta = await axios.get(
+                        `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}`,
+                        { headers: { Authorization: `Bearer ${tokenMP}` } }
+                    );
+
+                    if (consulta.data.status !== 'approved') {
+                        return res.status(409).json({
+                            error: 'Pix ainda não foi pago. Notificação não enviada.',
+                            mp_status: consulta.data.status
+                        });
+                    }
+
+                    // aproveita e marca como aprovado no pedido
+                    await executeQuery(
+                        'UPDATE pedido SET mp_status = ? WHERE id_pedido = ?',
+                        ['approved', id_pedido]
+                    );
+                }
+            }
+        } catch (e) {
+            console.error('Erro ao validar pagamento Pix antes de notificar:', e.response?.data || e.message);
+            return res.status(500).json({ error: 'Não foi possível validar o pagamento Pix.' });
+        }
+    }
+
     const sql = `
         INSERT INTO notificacoes
         (
