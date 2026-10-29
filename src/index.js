@@ -20,6 +20,10 @@ app.use(cors({
     credentials: true
 }));
 
+// --- ROTAS DO MERCADO PAGO ---
+const registrarRotasMercadoPago = require("./routes/mercadopago");
+registrarRotasMercadoPago(app);
+
 
 // --- ROTAS ---
 
