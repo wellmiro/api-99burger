@@ -1496,6 +1496,30 @@ app.get("/corridas", token.ValidateJWT, async function (req, res) {
     });
 });
 
+app.put("/motoristas/status", token.ValidateJWT, function (req, res) {
+    const { status, latitude, longitude } = req.body;
+    const id_usuario = req.id_usuario;
+
+    if (!id_usuario) {
+        return res.status(400).json({ error: "Usuário não identificado no token." });
+    }
+
+    const ssql = `
+        UPDATE usuario 
+        SET latitude = COALESCE(?, latitude), 
+            longitude = COALESCE(?, longitude)
+        WHERE id_usuario = ?
+    `;
+
+    db.query(ssql, [latitude || null, longitude || null, id_usuario], (err) => {
+        if (err) {
+            console.error("Erro ao atualizar localização do motorista:", err);
+            return res.status(500).json({ error: err.message });
+        }
+        return res.status(200).json({ message: "Status e localização atualizados com sucesso!" });
+    });
+});
+
 
 // 1. Retorna todas as notificações ativas ('A') do estabelecimento logado
 app.get("/notificacoes", token.ValidateJWT, function (request, response) {
