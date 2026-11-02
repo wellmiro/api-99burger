@@ -956,11 +956,29 @@ app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
 });
 
   app.put('/usuarios/:id', token.ValidateJWT, (req, res) => {
-    const { nome, email, tipo, senha } = req.body;
+    const { nome, email, tipo, senha, status, latitude, longitude } = req.body;
     const { id } = req.params;
     const id_estabelecimento = req.id_estabelecimento;
 
-    // Campos que são OBRIGATÓRIOS (sem eles o banco chora)
+    // 🛵 Se for o Motoboy atualizando localização/status (sem nome nem email):
+    if (latitude !== undefined || longitude !== undefined || (status && !nome)) {
+        const sqlGps = `
+            UPDATE usuario 
+            SET latitude = COALESCE(?, latitude), 
+                longitude = COALESCE(?, longitude) 
+            WHERE id_usuario = ?
+        `;
+        db.query(sqlGps, [latitude || null, longitude || null, id], (err) => {
+            if (err) {
+                console.error("Erro ao atualizar GPS do motoboy:", err);
+                return res.status(500).json({ error: err.message });
+            }
+            return res.status(200).json({ message: "Status e localização atualizados com sucesso!" });
+        });
+        return; // Encerra aqui sem pedir nome, email ou tipo!
+    }
+
+    // 🖥️ Se for a edição de perfil do painel desktop (onde nome e email são obrigatórios):
     if (!nome || !email || !tipo) {
         return res.status(400).json({ error: 'Nome, E-mail e Tipo são obrigatórios!' });
     }
@@ -968,14 +986,11 @@ app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
     let sql;
     let params;
 
-    // Se a senha NÃO for vazia, atualiza ela também
     if (senha && senha.trim() !== '') {
         sql = `UPDATE usuario SET nome=?, email=?, senha=?, tipo=? 
                WHERE id_usuario = ? AND id_estabelecimento = ?`;
         params = [nome, email, tipo, senha, id, id_estabelecimento];
     } else {
-        // Se a senha for vazia, o SQL NÃO possui o campo senha. 
-        // Assim, a senha antiga continua lá bonitinha.
         sql = `UPDATE usuario SET nome=?, email=?, tipo=? 
                WHERE id_usuario = ? AND id_estabelecimento = ?`;
         params = [nome, email, tipo, id, id_estabelecimento];
