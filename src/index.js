@@ -1441,6 +1441,47 @@ app.post('/usuarios', (req, res) => {
 
 // versao 2
 
+// --- HISTÓRICO DE PEDIDOS FINALIZADOS DO MOTOBOY ---
+app.get("/corridas", token.ValidateJWT, function (req, res) {
+    const placa = req.query.placa || req.headers['placa'];
+
+    if (!placa) {
+        return res.status(400).json({ error: "Placa do motorista não informada." });
+    }
+
+    const ssql = `
+        SELECT 
+            p.id_pedido,
+            p.id_pedido AS id_corrida,
+            p.nome_cliente,
+            p.nome_cliente AS nome,
+            DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_pedido,
+            DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_cadastro,
+            e.nome AS nome_estabelecimento,
+            COALESCE(e.nome, 'Lanchonete') AS origem,
+            COALESCE(p.endereco_entrega, 'Retirada no local') AS endereco_entrega,
+            COALESCE(p.endereco_entrega, 'Retirada no local') AS destino,
+            p.vl_entrega,
+            p.vl_entrega AS vl_corrida,
+            p.vl_total,
+            p.status,
+            p.forma_pagamento
+        FROM pedido p
+        LEFT JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+        WHERE p.status = 'F' 
+          AND p.placa = ?
+        ORDER BY p.id_pedido DESC
+    `;
+
+    db.query(ssql, [placa], function (err, result) {
+        if (err) {
+            console.error("Erro ao listar histórico de corridas:", err);
+            return res.status(500).json({ error: err.message });
+        }
+        return res.status(200).json(result);
+    });
+});
+
 
 // 1. Retorna todas as notificações ativas ('A') do estabelecimento logado
 app.get("/notificacoes", token.ValidateJWT, function (request, response) {
