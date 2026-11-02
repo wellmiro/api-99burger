@@ -1511,6 +1511,7 @@ app.get("/corridas", token.ValidateJWT, async function (req, res) {
     });
 });
 
+// --- 1. ATUALIZAR STATUS E LOCALIZAÇÃO GPS DO MOTOBOY ---
 app.put("/motoristas/status", token.ValidateJWT, function (req, res) {
     const { status, latitude, longitude } = req.body;
     const id_usuario = req.id_usuario;
@@ -1519,20 +1520,121 @@ app.put("/motoristas/status", token.ValidateJWT, function (req, res) {
         return res.status(400).json({ error: "Usuário não identificado no token." });
     }
 
+    // Atualiza na tabela motorista vinculada ao id_usuario
     const ssql = `
-        UPDATE usuario 
-        SET latitude = COALESCE(?, latitude), 
+        UPDATE motorista 
+        SET status_trabalho = COALESCE(?, status_trabalho), 
+            latitude = COALESCE(?, latitude), 
             longitude = COALESCE(?, longitude)
         WHERE id_usuario = ?
     `;
 
-    db.query(ssql, [latitude || null, longitude || null, id_usuario], (err) => {
+    db.query(ssql, [status || 'online', latitude || null, longitude || null, id_usuario], (err, result) => {
         if (err) {
-            console.error("Erro ao atualizar localização do motorista:", err);
+            console.error("Erro ao atualizar status do motorista:", err);
             return res.status(500).json({ error: err.message });
         }
         return res.status(200).json({ message: "Status e localização atualizados com sucesso!" });
     });
+});
+
+// --- 2. BUSCAR ENTREGAS DISPONÍVEIS (O app chama a cada poucos segundos quando está Online) ---
+app.get("/corridas/ofertas", token.ValidateJWT, function (req, res) {
+    // Busca pedidos que estão em produção ou prontos para entrega, sem motoboy atribuído
+    const ssql = `
+        SELECT 
+            p.id_pedido AS id_corrida,
+            p.id_pedido AS id_fila,
+            p.nome_cliente AS nome,
+            COALESCE(e.nome, 'Lanchonete') AS origem,
+            COALESCE(p.endereco_entrega, 'Endereço não informado') AS destino,
+            COALESCE(p.nome_cliente, '') AS whatsapp,
+            p.vl_entrega AS vl_corrida
+        FROM pedido p
+        LEFT JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+        WHERE p.status IN ('P', 'E') 
+          AND (p.placa IS NULL OR p.placa = '')
+          AND p.local_consumo = 'DELIVERY'
+        ORDER BY p.id_pedido ASC
+        LIMIT 1
+    `;
+
+    db.query(ssql, (err, rows) => {
+        if (err) {
+            console.error("Erro ao buscar ofertas de entrega:", err);
+            return res.status(500).json({ error: err.message });
+        }
+        // Retorna a lista (se não tiver nada, devolve [] com status 200 sem travar)
+        return res.status(200).json(rows);
+    });
+});
+
+// --- 3. ACEITAR / INICIAR / FINALIZAR A ENTREGA ---
+app.put("/corridas/:id_corrida/status", token.ValidateJWT, async function (req, res) {
+    const id_pedido = req.params.id_corrida;
+    const { status } = req.body;
+    const id_usuario = req.id_usuario;
+
+    try {
+        // Busca a placa do motoboy logado
+        let placa = null;
+        const mot = await executeQuery("SELECT placa FROM motorista WHERE id_usuario = ?", [id_usuario]);
+        if (mot.length > 0) {
+            placa = mot[0].placa;
+        }
+
+        // Mapeia o status do app de mototáxi para o status do seu sistema 99Burger:
+        // 'aceita' / 'iniciada' -> status 'E' (Saiu para entrega) e vincula a placa
+        // 'encerrada'          -> status 'F' (Finalizado)
+        // 'cancelada'          -> remove a placa para outro motoboy pegar
+        let novoStatus = 'E';
+        let updatePlaca = placa;
+
+        if (status === 'encerrada') {
+            novoStatus = 'F';
+        } else if (status === 'cancelada') {
+            novoStatus = 'P';
+            updatePlaca = null; // Libera o pedido para outro motoboy
+        }
+
+        const sql = "UPDATE pedido SET status = ?, placa = ? WHERE id_pedido = ?";
+        await executeQuery(sql, [novoStatus, updatePlaca, id_pedido]);
+
+        return res.status(200).json({ message: "Status da corrida atualizado com sucesso!" });
+    } catch (e) {
+        console.error("Erro ao atualizar status da corrida:", e);
+        return res.status(500).json({ error: e.message });
+    }
+});
+
+// --- 4. DASHBOARD DO MOTOBOY: GANHOS DO DIA ---
+app.get("/motoristas/resumo", token.ValidateJWT, async function (req, res) {
+    const id_usuario = req.id_usuario;
+
+    try {
+        const mot = await executeQuery("SELECT placa FROM motorista WHERE id_usuario = ?", [id_usuario]);
+        if (mot.length === 0 || !mot[0].placa) {
+            return res.status(404).json({ error: "Motorista não encontrado." });
+        }
+
+        const placa = mot[0].placa;
+
+        const ssql = `
+            SELECT 
+                COUNT(*) AS total_entregas_hoje,
+                COALESCE(SUM(vl_entrega), 0) AS total_ganho_hoje
+            FROM pedido
+            WHERE placa = ?
+              AND status = 'F'
+              AND DATE(dt_pedido) = CURDATE()
+        `;
+
+        const dados = await executeQuery(ssql, [placa]);
+        return res.status(200).json(dados[0]);
+    } catch (e) {
+        console.error("Erro no resumo do motoboy:", e);
+        return res.status(500).json({ error: e.message });
+    }
 });
 
 
