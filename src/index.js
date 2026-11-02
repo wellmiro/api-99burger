@@ -1441,12 +1441,10 @@ app.post('/usuarios', (req, res) => {
 
 // versao 2
 
-// --- HISTÓRICO DE PEDIDOS FINALIZADOS DO MOTOBOY ---
-// --- HISTÓRICO DE PEDIDOS FINALIZADOS DO MOTOBOY ---
+// --- HISTÓRICO: ÚLTIMOS 3 DIAS COM LIMITE ---
 app.get("/corridas", token.ValidateJWT, async function (req, res) {
     let placa = req.query.placa || req.headers['placa'];
 
-    // Se a placa não veio no parâmetro, busca direto do usuário logado no banco
     if (!placa && req.id_usuario) {
         try {
             const rows = await executeQuery("SELECT placa FROM usuario WHERE id_usuario = ?", [req.id_usuario]);
@@ -1454,7 +1452,7 @@ app.get("/corridas", token.ValidateJWT, async function (req, res) {
                 placa = rows[0].placa;
             }
         } catch (e) {
-            console.error("Erro ao buscar placa do usuário:", e);
+            console.error("Erro ao buscar placa:", e);
         }
     }
 
@@ -1462,6 +1460,7 @@ app.get("/corridas", token.ValidateJWT, async function (req, res) {
         return res.status(400).json({ error: "Este motorista não possui placa cadastrada no sistema." });
     }
 
+    // 🔒 Filtra apenas os últimos 3 dias e limita aos 50 mais recentes
     const ssql = `
         SELECT 
             p.id_pedido,
@@ -1483,12 +1482,14 @@ app.get("/corridas", token.ValidateJWT, async function (req, res) {
         LEFT JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
         WHERE p.status = 'F' 
           AND p.placa = ?
-        ORDER BY p.id_pedido DESC
+          AND p.dt_pedido >= DATE_SUB(NOW(), INTERVAL 3 DAY)
+        ORDER BY p.dt_pedido DESC
+        LIMIT 50
     `;
 
     db.query(ssql, [placa], function (err, result) {
         if (err) {
-            console.error("Erro ao listar histórico de corridas:", err);
+            console.error("Erro ao listar histórico:", err);
             return res.status(500).json({ error: err.message });
         }
         return res.status(200).json(result);
