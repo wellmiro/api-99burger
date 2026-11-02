@@ -9,7 +9,7 @@
 
 const crypto = require('crypto');
 const axios = require('axios');
-const db = require('../config/database');
+const db = require('../config/database.js');
 const token = require('../token.js');
 
 const MP_AUTH_URL = 'https://auth.mercadopago.com.br/authorization';

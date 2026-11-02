@@ -1367,7 +1367,7 @@ app.post('/usuarios', (req, res) => {
     });
 });
 
-  app.post("/login", function (req, res) {
+ app.post("/login", function (req, res) {
     const { email, senha } = req.body;
 
     if (!email || !senha)
@@ -1381,6 +1381,7 @@ app.post('/usuarios', (req, res) => {
             u.senha,
             u.tipo,
             u.status,
+            u.placa,                -- << NOVO: Placa do motorista
             u.id_estabelecimento,
             e.nome AS nome_estabelecimento,
             u.dt_cadastro,
@@ -1393,18 +1394,15 @@ app.post('/usuarios', (req, res) => {
     `;
 
     db.query(ssql, [email], function (err, result) {
-
         if (err) {
             console.error("Erro SQL /login:", err);
             return res.status(500).json({ error: "Erro no banco" });
         }
 
         if (result.length > 0) {
-
             const usuario = result[0];
 
             if (senha === usuario.senha) {
-
                 const token = jwt.sign(
                     {
                         id_usuario: usuario.id_usuario,
@@ -1414,15 +1412,17 @@ app.post('/usuarios', (req, res) => {
                         qtd_mesas: usuario.qtd_mesas
                     },
                     process.env.JWT_SECRET,
-                    { expiresIn: "24h" }
+                    { expiresIn: "30d" }
                 );
 
                 return res.status(200).json({
                     id_usuario: usuario.id_usuario,
+                    id_motorista: usuario.id_usuario, // Compatível com o app do motoboy
                     nome: usuario.nome,
                     email: usuario.email,
                     tipo: usuario.tipo,
                     status: usuario.status,
+                    placa: usuario.placa || "",       // Retorna a placa
                     id_estabelecimento: usuario.id_estabelecimento,
                     nome_estabelecimento: usuario.nome_estabelecimento,
                     dt_cadastro: usuario.dt_cadastro,
@@ -1430,19 +1430,11 @@ app.post('/usuarios', (req, res) => {
                     qtd_mesas: usuario.qtd_mesas,
                     token: token
                 });
-
             } else {
-
-                return res.status(401).json({
-                    error: "Senha incorreta"
-                });
+                return res.status(401).json({ error: "Senha incorreta" });
             }
-
         } else {
-
-            return res.status(404).json({
-                error: "Usuário não encontrado"
-            });
+            return res.status(404).json({ error: "Usuário não encontrado" });
         }
     });
 });
