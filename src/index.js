@@ -1442,11 +1442,24 @@ app.post('/usuarios', (req, res) => {
 // versao 2
 
 // --- HISTÓRICO DE PEDIDOS FINALIZADOS DO MOTOBOY ---
-app.get("/corridas", token.ValidateJWT, function (req, res) {
-    const placa = req.query.placa || req.headers['placa'];
+// --- HISTÓRICO DE PEDIDOS FINALIZADOS DO MOTOBOY ---
+app.get("/corridas", token.ValidateJWT, async function (req, res) {
+    let placa = req.query.placa || req.headers['placa'];
+
+    // Se a placa não veio no parâmetro, busca direto do usuário logado no banco
+    if (!placa && req.id_usuario) {
+        try {
+            const rows = await executeQuery("SELECT placa FROM usuario WHERE id_usuario = ?", [req.id_usuario]);
+            if (rows.length > 0 && rows[0].placa) {
+                placa = rows[0].placa;
+            }
+        } catch (e) {
+            console.error("Erro ao buscar placa do usuário:", e);
+        }
+    }
 
     if (!placa) {
-        return res.status(400).json({ error: "Placa do motorista não informada." });
+        return res.status(400).json({ error: "Este motorista não possui placa cadastrada no sistema." });
     }
 
     const ssql = `
@@ -1457,7 +1470,7 @@ app.get("/corridas", token.ValidateJWT, function (req, res) {
             p.nome_cliente AS nome,
             DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_pedido,
             DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_cadastro,
-            e.nome AS nome_estabelecimento,
+            COALESCE(e.nome, 'Lanchonete') AS nome_estabelecimento,
             COALESCE(e.nome, 'Lanchonete') AS origem,
             COALESCE(p.endereco_entrega, 'Retirada no local') AS endereco_entrega,
             COALESCE(p.endereco_entrega, 'Retirada no local') AS destino,
