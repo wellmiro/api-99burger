@@ -317,34 +317,62 @@ app.post("/produtos", token.ValidateJWT, function (req, res) {
 
 
   // Deletar um produto pelo id
- app.delete("/produtos/:id", token.ValidateJWT, function (req, res) {
+ // Deletar um produto pelo id (com limpeza de dependências e proteção de histórico)
+app.delete("/produtos/:id", token.ValidateJWT, async function (req, res) {
     const id_produto = req.params.id;
-    const id_estabelecimento = req.id_estabelecimento; // Segurança!
+    const id_estabelecimento = req.id_estabelecimento;
 
     if (!id_produto) {
         return res.status(400).json({ error: "ID do produto é obrigatório" });
     }
 
-    // Só deleta se o ID do produto bater E pertencer à empresa logada
-    const sqlDelete = `
-        DELETE FROM produto
-        WHERE id_produto = ? AND id_estabelecimento = ?
-    `;
+    try {
+        // 1. Confirma se o produto pertence ao estabelecimento logado
+        const prod = await executeQuery(
+            "SELECT id_produto FROM produto WHERE id_produto = ? AND id_estabelecimento = ?",
+            [id_produto, id_estabelecimento]
+        );
 
-    db.query(sqlDelete, [id_produto, id_estabelecimento], function (err, result) {
-        if (err) {
-            console.error("Erro ao deletar produto:", err);
-            return res.status(500).json({ error: "Erro ao deletar produto" });
-        }
-
-        // Se ninguém foi deletado, ou o ID não existe ou o produto é de outro dono
-        if (result.affectedRows === 0) {
+        if (prod.length === 0) {
             return res.status(403).json({ error: "Produto não encontrado ou acesso negado" });
         }
 
+        // 2. Verifica se o produto já está vinculado a algum pedido histórico
+        const vendas = await executeQuery(
+            "SELECT COUNT(*) AS total FROM pedido_item WHERE id_produto = ?",
+            [id_produto]
+        );
+
+        if (vendas[0].total > 0) {
+            return res.status(400).json({
+                error: "Este produto já possui pedidos registrados e não pode ser excluído."
+            });
+        }
+
+        // 3. Remove vínculos de ficha técnica e grupos de opções antes de apagar o produto
+        await executeQuery("DELETE FROM produto_ficha_tecnica WHERE id_produto = ?", [id_produto]);
+
+        await executeQuery(
+            `DELETE i FROM produto_opcao_item i
+             INNER JOIN produto_opcao o ON o.id_opcao = i.id_opcao
+             WHERE o.id_produto = ?`,
+            [id_produto]
+        );
+        await executeQuery("DELETE FROM produto_opcao WHERE id_produto = ?", [id_produto]);
+
+        // 4. Agora deleta o produto com segurança
+        await executeQuery(
+            "DELETE FROM produto WHERE id_produto = ? AND id_estabelecimento = ?",
+            [id_produto, id_estabelecimento]
+        );
+
         return res.status(200).json({ message: "Produto deletado com sucesso" });
-    });
+    } catch (err) {
+        console.error("Erro ao deletar produto:", err);
+        return res.status(500).json({ error: "Erro ao deletar produto: " + err.message });
+    }
 });
+
 
 
 // Rota para buscar grupos e itens do cardápio
