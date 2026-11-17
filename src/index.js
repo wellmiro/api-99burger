@@ -593,65 +593,93 @@ app.delete('/produtos/ficha/:id_ficha', token.ValidateJWT, async (req, res) => {
   }
 });
 
-app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, function (request, response) {
+app.get("/pedidos/completo/:id_pedido", token.ValidateJWT, async function (request, response) {
     const id_estabelecimento = request.id_estabelecimento;
     const id_pedido = request.params.id_pedido;
 
-    // 1. Cabeçalho do Pedido (Mesmos campos do /resumo)
-    const sqlPedido = `
-        SELECT 
-            p.id_pedido,
-            DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i:%s') AS dt_pedido,
-            p.status,
-            p.nome_cliente,
-            p.observacao,
-            p.forma_pagamento,
-            p.vl_entrega,
-            p.dinheiro,
-            p.troco,
-            p.local_consumo,
-            p.endereco_entrega,
-            u.nome AS nome_login,
-            p.rota,
-            p.vl_total
-        FROM pedido p
-        LEFT JOIN usuario u ON u.id_usuario = p.id_usuario
-        WHERE p.id_pedido = ? AND p.id_estabelecimento = ?
-    `;
+    try {
+        await recalcularSaldoPedido(id_pedido, id_estabelecimento);
 
-    // 2. Itens do Pedido (Mesmos campos do /itens_lista)
-    const sqlItens = `
-        SELECT 
-            p.id_pedido,
-            p.numero_mesa,
-            p.nome_cliente,
-            p.numero_pessoas,
-            i.id_item,
-            o.nome AS nome_produto,
-            o.url_foto,
-            i.qtd,
-            i.vl_unitario,
-            i.vl_total,
-            i.observacao
-        FROM pedido_item i
-        JOIN pedido p ON i.id_pedido = p.id_pedido
-        JOIN produto o ON o.id_produto = i.id_produto
-        WHERE i.id_pedido = ? AND p.id_estabelecimento = ?
-    `;
+        const sqlPedido = `
+            SELECT 
+                p.id_pedido,
+                DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i:%s') AS dt_pedido,
+                p.status,
+                p.nome_cliente,
+                p.observacao,
+                p.forma_pagamento,
+                p.numero_mesa,
+                p.numero_pessoas,
+                p.vl_subtotal,
+                p.vl_entrega,
+                p.dinheiro,
+                p.troco,
+                p.local_consumo,
+                p.endereco_entrega,
+                u.nome AS nome_login,
+                p.rota,
+                p.vl_total,
+                COALESCE((SELECT SUM(d.valor_pago) FROM divisao_pagamento d WHERE d.id_pedido = p.id_pedido), 0) AS vl_pago,
+                COALESCE(p.vl_falta, p.vl_total) AS vl_falta
+            FROM pedido p
+            LEFT JOIN usuario u ON u.id_usuario = p.id_usuario
+            WHERE p.id_pedido = ? AND p.id_estabelecimento = ?
+        `;
 
-    db.query(sqlPedido, [id_pedido, id_estabelecimento], (err, resPedido) => {
-        if (err) return response.status(500).json({ error: err.message });
-        if (resPedido.length === 0) return response.status(404).json({ error: "Pedido não encontrado" });
+        const sqlItens = `
+            SELECT 
+                p.id_pedido,
+                p.numero_mesa,
+                p.nome_cliente,
+                p.numero_pessoas,
+                i.id_item,
+                o.nome AS nome_produto,
+                o.url_foto,
+                i.qtd,
+                i.vl_unitario,
+                i.vl_total,
+                i.observacao
+            FROM pedido_item i
+            JOIN pedido p ON i.id_pedido = p.id_pedido
+            JOIN produto o ON o.id_produto = i.id_produto
+            WHERE i.id_pedido = ? AND p.id_estabelecimento = ?
+        `;
 
-        db.query(sqlItens, [id_pedido, id_estabelecimento], (err, resItens) => {
-            if (err) return response.status(500).json({ error: err.message });
-            
-            return response.status(200).json({
-                pedido: resPedido[0],
-                itens: resItens
-            });
+        const sqlPagamentos = `
+            SELECT 
+                d.id_divisao,
+                d.id_pedido,
+                d.id_usuario,
+                COALESCE(u.nome, '') AS nome_usuario,
+                d.valor_pago,
+                d.forma_pagamento,
+                COALESCE(d.observacao, '') AS observacao,
+                DATE_FORMAT(d.dt_pagamento, '%d/%m/%Y %H:%i:%s') AS dt_pagamento
+            FROM divisao_pagamento d
+            LEFT JOIN usuario u ON u.id_usuario = d.id_usuario
+            WHERE d.id_pedido = ?
+            ORDER BY d.id_divisao ASC
+        `;
+
+        const resPedido = await executeQuery(sqlPedido, [id_pedido, id_estabelecimento]);
+        if (resPedido.length === 0) {
+            return response.status(404).json({ error: "Pedido não encontrado" });
+        }
+
+        const [resItens, resPagamentos] = await Promise.all([
+            executeQuery(sqlItens, [id_pedido, id_estabelecimento]),
+            executeQuery(sqlPagamentos, [id_pedido])
+        ]);
+
+        return response.status(200).json({
+            pedido: resPedido[0],
+            itens: resItens,
+            pagamentos: resPagamentos
         });
-    });
+    } catch (err) {
+        console.error("Erro em /pedidos/completo:", err);
+        return response.status(500).json({ error: err.message });
+    }
 });
 
 // 1. Listar todos os insumos do estabelecimento logado
@@ -696,29 +724,33 @@ app.post('/insumos', token.ValidateJWT, (req, res) => {
 
 
 
-app.put("/pedidos/atualizar_valor_total/:id_pedido", token.ValidateJWT, function (request, response) {
+app.put("/pedidos/atualizar_valor_total/:id_pedido", token.ValidateJWT, async function (request, response) {
     const idPedido = request.params.id_pedido;
+    const id_estabelecimento = request.id_estabelecimento;
 
-    // Ajustado de "pedido_itens" para "pedido_item" conforme sua estrutura
-    const ssql = `
-        UPDATE pedido 
-        SET vl_total = (
-            SELECT COALESCE(SUM(vl_total), 0) + vl_entrega 
-            FROM pedido_item 
-            WHERE id_pedido = ?
-        ) 
-        WHERE id_pedido = ?`;
+    try {
+        await executeQuery(
+            `UPDATE pedido 
+             SET vl_total = (
+                 SELECT COALESCE(SUM(vl_total), 0) + vl_entrega 
+                 FROM pedido_item 
+                 WHERE id_pedido = ?
+             ) 
+             WHERE id_pedido = ? AND id_estabelecimento = ?`,
+            [idPedido, idPedido, id_estabelecimento]
+        );
 
-    db.query(ssql, [idPedido, idPedido], function (err, result) {
-        if (err) {
-            console.error("Erro ao atualizar valor total:", err);
-            return response.status(500).send(err);
-        }
-        return response.status(200).json({ 
-            message: "Valor total atualizado com sucesso", 
-            id_pedido: idPedido 
+        const saldo = await recalcularSaldoPedido(idPedido, id_estabelecimento);
+
+        return response.status(200).json({
+            message: "Valor total atualizado com sucesso",
+            id_pedido: idPedido,
+            ...saldo
         });
-    });
+    } catch (err) {
+        console.error("Erro ao atualizar valor total:", err);
+        return response.status(500).send(err);
+    }
 });
 
 // Endpoint para validar a existência do pedido antes de processar a notificação
@@ -1137,31 +1169,23 @@ app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
 
 
 
-  // DELETE /pedidos/:id_pedido
-  app.delete("/pedidos/:id_pedido", token.ValidateJWT, function (request, response) {
-      const idPedido = request.params.id_pedido;
+  app.delete("/pedidos/:id_pedido", token.ValidateJWT, async function (request, response) {
+    const idPedido = request.params.id_pedido;
+    const id_estabelecimento = request.id_estabelecimento;
 
-      // 1) Deleta os itens do pedido primeiro (Garante integridade referencial)
-      let sqlItens = "DELETE FROM pedido_item WHERE id_pedido = ?";
-      db.query(sqlItens, [idPedido], function (err, result) {
-          if (err) {
-              return response.status(500).json({ error: err.message });
-          }
+    try {
+        await executeQuery("DELETE FROM divisao_pagamento WHERE id_pedido = ?", [idPedido]);
+        await executeQuery("DELETE FROM pedido_item WHERE id_pedido = ?", [idPedido]);
+        await executeQuery("DELETE FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?", [idPedido, id_estabelecimento]);
 
-          // 2) Deleta o pedido
-          let sqlPedido = "DELETE FROM pedido WHERE id_pedido = ?";
-          db.query(sqlPedido, [idPedido], function (err2, result2) {
-              if (err2) {
-                  return response.status(500).json({ error: err2.message });
-              }
-
-              return response.status(200).json({ 
-                  message: "Pedido deletado com sucesso", 
-                  id_pedido: idPedido 
-              });
-          });
-      });
-  });
+        return response.status(200).json({
+            message: "Pedido deletado com sucesso",
+            id_pedido: idPedido
+        });
+    } catch (err) {
+        return response.status(500).json({ error: err.message });
+    }
+});
 
   app.put("/pedidos/numero_pessoas/:id_pedido", token.ValidateJWT, function (request, response) {
 
@@ -1260,6 +1284,153 @@ app.delete('/categorias/:id', token.ValidateJWT, (req, res) => {
       });
 
   });
+
+  // 1) GET: Lista totais + pagamentos parciais já lançados na mesa/pedido
+app.get("/pedidos/:id_pedido/pagamentos", token.ValidateJWT, async (req, res) => {
+    const { id_pedido } = req.params;
+    const id_estabelecimento = req.id_estabelecimento;
+
+    try {
+        const resumo = await recalcularSaldoPedido(id_pedido, id_estabelecimento);
+        if (!resumo) {
+            return res.status(404).json({ error: "Pedido não encontrado." });
+        }
+
+        const pagamentos = await executeQuery(
+            `SELECT 
+                d.id_divisao,
+                d.id_pedido,
+                d.id_usuario,
+                COALESCE(u.nome, '') AS nome_usuario,
+                d.valor_pago,
+                d.forma_pagamento,
+                COALESCE(d.observacao, '') AS observacao,
+                DATE_FORMAT(d.dt_pagamento, '%d/%m/%Y %H:%i:%s') AS dt_pagamento
+             FROM divisao_pagamento d
+             LEFT JOIN usuario u ON u.id_usuario = d.id_usuario
+             WHERE d.id_pedido = ?
+             ORDER BY d.id_divisao ASC`,
+            [id_pedido]
+        );
+
+        return res.status(200).json({
+            id_pedido: Number(id_pedido),
+            vl_total: resumo.vl_total,
+            vl_pago: resumo.vl_pago,
+            vl_falta: resumo.vl_falta,
+            status: resumo.status,
+            pagamentos: pagamentos.map(p => ({
+                ...p,
+                valor_pago: Number(p.valor_pago) || 0
+            }))
+        });
+    } catch (err) {
+        console.error("Erro ao buscar pagamentos do pedido:", err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// 2) POST: Lança 1 pagamento parcial OU vários de uma vez ({ pagamentos: [...] })
+app.post("/pedidos/:id_pedido/pagamentos", token.ValidateJWT, async (req, res) => {
+    const { id_pedido } = req.params;
+    const id_estabelecimento = req.id_estabelecimento;
+    const { valor_pago, forma_pagamento, observacao, id_usuario, pagamentos } = req.body;
+
+    // Aceita tanto um array { pagamentos: [...] } quanto um pagamento único { valor_pago, forma_pagamento, observacao }
+    const lista = Array.isArray(pagamentos) && pagamentos.length > 0
+        ? pagamentos
+        : [{ valor_pago, forma_pagamento, observacao, id_usuario }];
+
+    for (const item of lista) {
+        if (!Number(item.valor_pago) || Number(item.valor_pago) <= 0) {
+            return res.status(400).json({ error: "Todos os pagamentos precisam ter valor_pago maior que zero." });
+        }
+        if (!item.forma_pagamento || String(item.forma_pagamento).trim() === "") {
+            return res.status(400).json({ error: "Todos os pagamentos precisam ter forma_pagamento." });
+        }
+    }
+
+    const totalLancado = lista.reduce((acc, item) => acc + Number(item.valor_pago), 0);
+
+    try {
+        const saldoAtual = await recalcularSaldoPedido(id_pedido, id_estabelecimento);
+        if (!saldoAtual) {
+            return res.status(404).json({ error: "Pedido não encontrado." });
+        }
+        if (saldoAtual.status === 'C') {
+            return res.status(400).json({ error: "Pedido cancelado não pode receber pagamento." });
+        }
+        if (totalLancado > saldoAtual.vl_falta + 0.01) {
+            return res.status(400).json({
+                error: `Total informado (R$ ${totalLancado.toFixed(2)}) é maior que o saldo restante (Falta: R$ ${saldoAtual.vl_falta.toFixed(2)}).`
+            });
+        }
+
+        const agora = new Date();
+        agora.setHours(agora.getHours() - 3);
+        const dtPagamento = agora.toISOString().slice(0, 19).replace('T', ' ');
+
+        const valoresInsert = lista.map(item => [
+            id_pedido,
+            item.id_usuario || req.id_usuario || null,
+            Number(Number(item.valor_pago).toFixed(2)),
+            String(item.forma_pagamento).trim(),
+            item.observacao ? String(item.observacao).trim() : null,
+            dtPagamento
+        ]);
+
+        const insertRes = await executeQuery(
+            `INSERT INTO divisao_pagamento (id_pedido, id_usuario, valor_pago, forma_pagamento, observacao, dt_pagamento) VALUES ?`,
+            [valoresInsert]
+        );
+
+        const novoSaldo = await recalcularSaldoPedido(id_pedido, id_estabelecimento);
+
+        return res.status(201).json({
+            sucesso: true,
+            id_divisao: insertRes.insertId,
+            vl_total: novoSaldo.vl_total,
+            vl_pago: novoSaldo.vl_pago,
+            vl_falta: novoSaldo.vl_falta,
+            quitado: novoSaldo.vl_falta <= 0
+        });
+    } catch (err) {
+        console.error("Erro ao registrar pagamento:", err);
+        return res.status(500).json({ error: err.message });
+    }
+});
+
+// 3) DELETE: Estorna/apaga um pagamento da divisao_pagamento e recalcula vl_falta
+app.delete("/pedidos/:id_pedido/pagamentos/:id_divisao", token.ValidateJWT, async (req, res) => {
+    const { id_pedido, id_divisao } = req.params;
+    const id_estabelecimento = req.id_estabelecimento;
+
+    try {
+        const result = await executeQuery(
+            `DELETE d FROM divisao_pagamento d
+             INNER JOIN pedido p ON p.id_pedido = d.id_pedido
+             WHERE d.id_divisao = ? AND d.id_pedido = ? AND p.id_estabelecimento = ?`,
+            [id_divisao, id_pedido, id_estabelecimento]
+        );
+
+        if (result.affectedRows === 0) {
+            return res.status(404).json({ error: "Pagamento não encontrado." });
+        }
+
+        const novoSaldo = await recalcularSaldoPedido(id_pedido, id_estabelecimento);
+
+        return res.status(200).json({
+            sucesso: true,
+            vl_total: novoSaldo.vl_total,
+            vl_pago: novoSaldo.vl_pago,
+            vl_falta: novoSaldo.vl_falta,
+            quitado: novoSaldo.vl_falta <= 0
+        });
+    } catch (err) {
+        console.error("Erro ao remover pagamento:", err);
+        return res.status(500).json({ error: err.message });
+    }
+});
 
   app.get("/configs", function (request, response) {
 
@@ -1833,24 +2004,54 @@ app.get("/estabelecimentos/:slug", function (request, response) {
 });
 
 // Adicione esta rota no seu arquivo de rotas ou server.js principal
-app.get("/pedidos/:id", async (req, res) => {
-    const idPedido = req.params.id;
+app.get("/pedidos", token.ValidateJWT, function (request, response) {
+    const id_est = request.id_estabelecimento;
+    const { data } = request.query;
 
-    try {
-        // Altere 'db' para o nome da sua variável de conexão com o banco
-        // Exemplo hipotético usando mysql/mysql2:
-        const [rows] = await db.execute('SELECT id_pedido FROM pedido WHERE id_pedido = ?', [idPedido]);
+    let params = [id_est];
+    let filtro_data = "";
 
-        if (rows.length > 0) {
-            // Pedido encontrado: retorna 200
-            res.status(200).json({ status: "encontrado", id_pedido: idPedido });
-        } else {
-            // Pedido NÃO existe: retorna 404
-            res.status(404).json({ error: "Pedido não encontrado" });
-        }
-    } catch (error) {
-        res.status(500).json({ error: "Erro interno no servidor" });
+    if (data) {
+        filtro_data = " AND DATE(p.dt_pedido) >= ? ";
+        params.push(data);
     }
+
+    const ssql = `
+        SELECT 
+            p.id_pedido,
+            p.status,
+            DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i:%s') AS dt_pedido,
+            p.vl_subtotal,
+            p.vl_entrega,
+            p.forma_pagamento,
+            p.vl_total,
+            COALESCE((SELECT SUM(d.valor_pago) FROM divisao_pagamento d WHERE d.id_pedido = p.id_pedido), 0) AS vl_pago,
+            COALESCE(
+                p.vl_falta,
+                GREATEST(0, p.vl_total - COALESCE((SELECT SUM(d.valor_pago) FROM divisao_pagamento d WHERE d.id_pedido = p.id_pedido), 0))
+            ) AS vl_falta,
+            p.numero_mesa,
+            p.numero_pessoas,
+            p.local_consumo,
+            COUNT(i.id_item) AS qtd_item,
+            p.nome_cliente
+        FROM pedido p
+        LEFT JOIN pedido_item i ON i.id_pedido = p.id_pedido
+        WHERE p.id_estabelecimento = ? ${filtro_data}
+        GROUP BY 
+            p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido,
+            p.vl_subtotal, p.vl_entrega, p.vl_total, p.vl_falta,
+            p.nome_cliente, p.numero_mesa, p.numero_pessoas, p.local_consumo
+        ORDER BY p.id_pedido DESC
+    `;
+
+    db.query(ssql, params, function (err, result) {
+        if (err) {
+            console.error("Erro ao listar pedidos:", err);
+            return response.status(500).json({ error: "Erro interno no servidor." });
+        }
+        return response.status(200).json(result);
+    });
 });
 
 
@@ -1944,74 +2145,96 @@ app.put("/impressora", token.ValidateJWT, (req, res) => {
 
   app.post('/pedidos', token.ValidateJWT, async (req, res) => {
     const p = req.body;
-
-    // Removemos a obrigatoriedade. Se não vier, o sistema segue o fluxo.
-    // Opcional: Você pode definir um padrão caso queira: const localConsumo = p.local_consumo || 'LOCAL';
+    const idEstab = p.id_estabelecimento || req.id_estabelecimento;
+    const vlTotal = Math.max(0, Number(p.vl_total) || 0);
 
     try {
         const agora = new Date();
         agora.setHours(agora.getHours() - 3);
         const dtPedidoBrasilia = agora.toISOString().slice(0, 19).replace('T', ' ');
 
-        const result = await new Promise((r, j) =>
-            db.query(
-                `INSERT INTO pedido 
-                (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, forma_pagamento, vl_total, numero_mesa, numero_pessoas, status, dt_pedido, endereco_entrega, observacao, dinheiro, troco, local_consumo)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-                [
-                    p.id_usuario, 
-                    p.id_estabelecimento, 
-                    p.nome_cliente || '-', 
-                    p.vl_subtotal || 0,
-                    p.vl_entrega || 0, 
-                    p.forma_pagamento || null, 
-                    p.vl_total || 0,
-                    p.numero_mesa || null, 
-                    p.numero_pessoas || null, 
-                    'A',
-                    dtPedidoBrasilia, 
-                    p.endereco_entrega || null, 
-                    p.observacao || null, 
-                    p.dinheiro || 0, 
-                    p.troco || 0, 
-                    p.local_consumo || null // Se não vier, grava nulo ou o padrão do banco
-                ],
-                (err, res) => err ? j(err) : r(res)
-            )
+        const result = await executeQuery(
+            `INSERT INTO pedido 
+            (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, forma_pagamento, vl_total, vl_falta, numero_mesa, numero_pessoas, status, dt_pedido, endereco_entrega, observacao, dinheiro, troco, local_consumo)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+            [
+                p.id_usuario || req.id_usuario,
+                idEstab,
+                p.nome_cliente || '-',
+                p.vl_subtotal || 0,
+                p.vl_entrega || 0,
+                p.forma_pagamento || null,
+                vlTotal,
+                vlTotal,
+                p.numero_mesa || null,
+                p.numero_pessoas || null,
+                'A',
+                dtPedidoBrasilia,
+                p.endereco_entrega || null,
+                p.observacao || null,
+                p.dinheiro || 0,
+                p.troco || 0,
+                p.local_consumo || null
+            ]
         );
 
         const idPedido = result.insertId;
 
-        // Inserção dos itens (mantenha a lógica abaixo conforme seu código original)
-        if (p.itens && p.itens.length > 0) {
+        // 1. Grava os itens do pedido
+        if (Array.isArray(p.itens) && p.itens.length > 0) {
             const itens = p.itens.map(i => [
                 idPedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null
             ]);
 
-            await new Promise((r, j) =>
-                db.query(
-                    `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`,
-                    [itens],
-                    err => err ? j(err) : r()
-                )
+            await executeQuery(
+                `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`,
+                [itens]
             );
         }
 
-        // Retornamos o id_pedido para que o Delphi possa usar se precisar
-        res.status(201).json({ id_pedido: idPedido, message: "Pedido salvo com sucesso" });
+        // 2. Opcional: se já vierem pagamentos parciais juntos, grava tudo na divisao_pagamento e recalcula vl_falta
+        let saldo = { vl_total: vlTotal, vl_pago: 0, vl_falta: vlTotal };
+        if (Array.isArray(p.pagamentos) && p.pagamentos.length > 0) {
+            const pagamentosValidos = p.pagamentos
+                .filter(pg => Number(pg.valor_pago) > 0 && pg.forma_pagamento)
+                .map(pg => [
+                    idPedido,
+                    pg.id_usuario || p.id_usuario || req.id_usuario || null,
+                    Number(Number(pg.valor_pago).toFixed(2)),
+                    String(pg.forma_pagamento).trim(),
+                    pg.observacao ? String(pg.observacao).trim() : null,
+                    dtPedidoBrasilia
+                ]);
+
+            if (pagamentosValidos.length > 0) {
+                await executeQuery(
+                    `INSERT INTO divisao_pagamento (id_pedido, id_usuario, valor_pago, forma_pagamento, observacao, dt_pagamento) VALUES ?`,
+                    [pagamentosValidos]
+                );
+                saldo = await recalcularSaldoPedido(idPedido, idEstab) || saldo;
+            }
+        }
+
+        return res.status(201).json({
+            id_pedido: idPedido,
+            vl_total: saldo.vl_total,
+            vl_pago: saldo.vl_pago,
+            vl_falta: saldo.vl_falta,
+            message: "Pedido salvo com sucesso"
+        });
 
     } catch (e) {
         console.error(e);
-        res.status(500).json({ error: e.message });
+        return res.status(500).json({ error: e.message });
     }
 });
 
 app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
     const id_pedido = parseInt(req.params.id, 10);
     const { itens, id_estabelecimento } = req.body;
+    const idEstab = id_estabelecimento || req.id_estabelecimento;
 
-    // Validação básica apenas do que é necessário para a operação
-    if (!id_pedido || !Array.isArray(itens) || !itens.length || !id_estabelecimento) {
+    if (!id_pedido || !Array.isArray(itens) || !itens.length || !idEstab) {
         return res.status(400).json({ error: 'Dados incompletos para adicionar itens.' });
     }
 
@@ -2020,48 +2243,39 @@ app.post('/pedidos/:id/itens', token.ValidateJWT, async (req, res) => {
             id_pedido, i.id_produto, i.qtd, i.vl_unitario, i.vl_total, i.observacao || null
         ]);
 
-        // 1. Inserir os novos itens na tabela de itens
-        await new Promise((resolve, reject) => {
-            const sqlInserir = `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`;
-            db.query(sqlInserir, [valores], (err, result) => err ? reject(err) : resolve(result));
-        });
+        await executeQuery(
+            `INSERT INTO pedido_item (id_pedido, id_produto, qtd, vl_unitario, vl_total, observacao) VALUES ?`,
+            [valores]
+        );
 
-        // Somar o total dos novos itens
         const totalItensNovos = itens.reduce((acc, i) => acc + (Number(i.vl_total) || 0), 0);
 
-        // 2. Atualizar o valor total na tabela pedido
-        await new Promise((resolve, reject) => {
-            const sqlAtualizaTotal = `
-                UPDATE pedido
-                SET vl_total = vl_total + ?
-                WHERE id_pedido = ? AND id_estabelecimento = ?;
-            `;
-            db.query(sqlAtualizaTotal, [totalItensNovos, id_pedido, id_estabelecimento], (err) => err ? reject(err) : resolve());
-        });
+        await executeQuery(
+            `UPDATE pedido SET vl_total = vl_total + ? WHERE id_pedido = ? AND id_estabelecimento = ?`,
+            [totalItensNovos, id_pedido, idEstab]
+        );
 
-        // 3. Buscar dados atuais para retorno (sem travas de obrigatoriedade)
-        const pedido = await new Promise((resolve, reject) => {
-            db.query(
-                "SELECT nome_cliente, vl_total, local_consumo FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?",
-                [id_pedido, id_estabelecimento],
-                (err, result) => err ? reject(err) : resolve(result[0])
-            );
-        });
+        const saldo = await recalcularSaldoPedido(id_pedido, idEstab);
 
-        if (!pedido) {
+        const rowsPedido = await executeQuery(
+            "SELECT nome_cliente, vl_total, vl_falta, local_consumo FROM pedido WHERE id_pedido = ? AND id_estabelecimento = ?",
+            [id_pedido, idEstab]
+        );
+
+        if (rowsPedido.length === 0) {
             return res.status(404).json({ error: 'Pedido não localizado.' });
         }
 
-        // Retorna o sucesso para o Delphi seguir com a vida (e com a impressão local)
-        res.status(201).json({ 
-            message: 'Itens adicionados com sucesso', 
-            novo_total: pedido.vl_total,
-            local: pedido.local_consumo 
+        return res.status(201).json({
+            message: 'Itens adicionados com sucesso',
+            novo_total: rowsPedido[0].vl_total,
+            vl_falta: saldo ? saldo.vl_falta : rowsPedido[0].vl_falta,
+            local: rowsPedido[0].local_consumo
         });
 
     } catch (err) {
         console.error("Erro ao adicionar itens:", err);
-        res.status(500).json({ message: 'Erro interno', error: err.message });
+        return res.status(500).json({ message: 'Erro interno', error: err.message });
     }
 });
 
