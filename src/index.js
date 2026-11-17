@@ -2745,6 +2745,14 @@ function executeQuery(sql, params = []) {
     });
 }
 
+// Taxa da plataforma 99Burger (application_fee do Mercado Pago)
+// Até R$ 10,00 => 1% | Acima de R$ 10,00 => 2%
+// O Mercado Pago cobra a taxa dele do lojista, separado desta.
+function calcularTaxaPlataforma(valor) {
+    const percentual = valor > 10 ? 0.02 : 0.01;
+    return Math.round((valor * percentual + Number.EPSILON) * 100) / 100;
+}
+
 app.post("/pix/gerar", async (req, res) => {
     try {
         const { id_pedido, slug, id_estabelecimento, transaction_amount, description, payer } = req.body;
@@ -2795,15 +2803,34 @@ app.post("/pix/gerar", async (req, res) => {
             }
         }
 
-        // 4. Cria o Pix no Mercado Pago com a chave específica da lanchonete
+        // 4. Monta o pagamento e calcula a taxa da plataforma
+        const valor = Number(transaction_amount);
+        if (!valor || valor <= 0) {
+            return res.status(400).json({ error: "Valor do pedido inválido." });
+        }
+
+        const pagamentoBody = {
+            transaction_amount: valor,
+            description: description || `Pedido #${id_pedido}`,
+            payment_method_id: 'pix',
+            payer: payerData
+        };
+
+        // application_fee só funciona com o token OAuth da loja (conta diferente da sua).
+        // Se caiu no plano B (.env = sua própria conta), não cobra taxa.
+        const usandoTokenDaPlataforma = tokenMP === process.env.MP_ACCESS_TOKEN;
+        if (!usandoTokenDaPlataforma) {
+            const taxa = calcularTaxaPlataforma(valor);
+            if (taxa > 0) {
+                pagamentoBody.application_fee = taxa;
+                console.log(`[PIX] Pedido ${id_pedido}: valor ${valor.toFixed(2)} | taxa plataforma ${taxa.toFixed(2)}`);
+            }
+        }
+
+        // 5. Cria o Pix no Mercado Pago com a chave específica da lanchonete
         const responseMP = await axios.post(
             'https://api.mercadopago.com/v1/payments',
-            {
-                transaction_amount: Number(transaction_amount),
-                description: description || `Pedido #${id_pedido}`,
-                payment_method_id: 'pix',
-                payer: payerData
-            },
+            pagamentoBody,
             {
                 headers: {
                     'Authorization': `Bearer ${tokenMP}`,
@@ -2819,7 +2846,7 @@ app.post("/pix/gerar", async (req, res) => {
         const mp_qr_code_base64 = paymentData.point_of_interaction.transaction_data.qr_code_base64;
         const mp_status = paymentData.status;
 
-        // 5. Salva os dados do Pix gerado no pedido
+        // 6. Salva os dados do Pix gerado no pedido
         const sqlUpdate = "UPDATE pedido SET mp_payment_id = ?, mp_qr_code = ?, mp_status = ? WHERE id_pedido = ?";
         if (id_pedido) {
             db.query(sqlUpdate, [mp_payment_id, mp_qr_code, mp_status, id_pedido]);
