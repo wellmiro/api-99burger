@@ -24,6 +24,32 @@ app.use(cors({
 const registrarRotasMercadoPago = require("./routes/mercadopago");
 registrarRotasMercadoPago(app);
 
+// Recalcula o total pago na divisao_pagamento e atualiza pedido.vl_falta
+async function recalcularSaldoPedido(id_pedido, id_estabelecimento) {
+    const rows = await executeQuery(
+        `SELECT 
+            p.vl_total,
+            p.status,
+            COALESCE((SELECT SUM(d.valor_pago) FROM divisao_pagamento d WHERE d.id_pedido = p.id_pedido), 0) AS vl_pago
+         FROM pedido p
+         WHERE p.id_pedido = ? AND p.id_estabelecimento = ?`,
+        [id_pedido, id_estabelecimento]
+    );
+
+    if (rows.length === 0) return null;
+
+    const vl_total = Number(rows[0].vl_total) || 0;
+    const vl_pago = Number(rows[0].vl_pago) || 0;
+    const vl_falta = Math.max(0, Number((vl_total - vl_pago).toFixed(2)));
+
+    await executeQuery(
+        "UPDATE pedido SET vl_falta = ? WHERE id_pedido = ? AND id_estabelecimento = ?",
+        [vl_falta, id_pedido, id_estabelecimento]
+    );
+
+    return { vl_total, vl_pago, vl_falta, status: rows[0].status };
+}
+
 
 // --- ROTAS ---
 
