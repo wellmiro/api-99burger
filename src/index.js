@@ -1592,8 +1592,9 @@ app.post('/usuarios', (req, res) => {
             u.email,
             u.senha,
             u.tipo,
+            u.funcao,
             u.status,
-            u.placa,                -- << NOVO: Placa do motorista
+            u.placa,
             u.id_estabelecimento,
             e.nome AS nome_estabelecimento,
             u.dt_cadastro,
@@ -1620,6 +1621,7 @@ app.post('/usuarios', (req, res) => {
                         id_usuario: usuario.id_usuario,
                         nome: usuario.nome,
                         tipo: usuario.tipo,
+                        funcao: usuario.funcao || "geral",
                         id_estabelecimento: usuario.id_estabelecimento,
                         qtd_mesas: usuario.qtd_mesas
                     },
@@ -1629,12 +1631,13 @@ app.post('/usuarios', (req, res) => {
 
                 return res.status(200).json({
                     id_usuario: usuario.id_usuario,
-                    id_motorista: usuario.id_usuario, // Compatível com o app do motoboy
+                    id_motorista: usuario.id_usuario,
                     nome: usuario.nome,
                     email: usuario.email,
                     tipo: usuario.tipo,
+                    funcao: usuario.funcao || "geral",
                     status: usuario.status,
-                    placa: usuario.placa || "",       // Retorna a placa
+                    placa: usuario.placa || "",
                     id_estabelecimento: usuario.id_estabelecimento,
                     nome_estabelecimento: usuario.nome_estabelecimento,
                     dt_cadastro: usuario.dt_cadastro,
@@ -1650,6 +1653,7 @@ app.post('/usuarios', (req, res) => {
         }
     });
 });
+
 
 // versao 2
 
