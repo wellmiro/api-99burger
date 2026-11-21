@@ -3150,10 +3150,12 @@ app.get("/pix/status/:payment_id", async function (req, res) {
     }
 
     try {
-        // 1. Descobre de qual loja é esse pagamento para pegar o token dela
+        // 1. Busca o pedido e o token da loja
         let tokenMP = null;
         const rows = await executeQuery(
-            `SELECT e.mp_access_token 
+            `SELECT p.id_pedido, p.id_estabelecimento, p.nome_cliente, p.vl_total,
+                    p.forma_pagamento, p.local_consumo, p.endereco_entrega,
+                    e.mp_access_token 
              FROM pedido p 
              INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento 
              WHERE p.mp_payment_id = ? LIMIT 1`,
@@ -3164,14 +3166,13 @@ app.get("/pix/status/:payment_id", async function (req, res) {
             tokenMP = rows[0].mp_access_token;
         }
 
-        // Se ainda não tiver token no banco, usa o .env como reserva
         if (!tokenMP) {
             tokenMP = process.env.MP_ACCESS_TOKEN;
         }
 
-        // 2. Consulta no Mercado Pago com a chave da própria loja
+        // 2. Consulta no Mercado Pago
         const responseMP = await axios.get(
-            `https://api.mercadopago.com/v1/payments/${payment_id}`,
+            `https://mercadopago.com{payment_id}`,
             {
                 headers: {
                     'Authorization': `Bearer ${tokenMP}`
@@ -3180,6 +3181,31 @@ app.get("/pix/status/:payment_id", async function (req, res) {
         );
 
         const mp_status = responseMP.data.status;
+
+        // 3. Se aprovou no Mercado Pago, atualiza o pedido e garante a notificação para o Delphi
+        if (mp_status === 'approved' && rows.length > 0) {
+            const ped = rows[0];
+
+            await executeQuery(
+                "UPDATE pedido SET mp_status = 'approved' WHERE id_pedido = ?",
+                [ped.id_pedido]
+            );
+
+            // Verifica se já existe notificação para não duplicar
+            const notifExistente = await executeQuery(
+                "SELECT id_notificacao FROM notificacoes WHERE id_pedido = ? AND tipo = 'CARDAPIO_DIGITAL' LIMIT 1",
+                [ped.id_pedido]
+            );
+
+            if (notifExistente.length === 0) {
+                const msg = `NOVO PEDIDO #${ped.id_pedido} (PIX PAGO)\nCliente: ${ped.nome_cliente}\nTotal: R$ ${Number(ped.vl_total).toFixed(2)}\nTipo: ${ped.local_consumo}`;
+                await executeQuery(
+                    `INSERT INTO notificacoes (id_usuario, mensagem, status, dt_criacao, id_estabelecimento, tipo, id_pedido)
+                     VALUES (0, ?, 'A', NOW(), ?, 'CARDAPIO_DIGITAL', ?)`,
+                    [msg, ped.id_estabelecimento, ped.id_pedido]
+                );
+            }
+        }
 
         return res.status(200).json({
             mp_payment_id: payment_id,
@@ -3192,6 +3218,7 @@ app.get("/pix/status/:payment_id", async function (req, res) {
         return res.status(500).json({ error: "Erro ao consultar status no Mercado Pago." });
     }
 });
+
 
 app.post("/pix/reembolsar", async function (req, res) {
     const { id_pedido } = req.body;
