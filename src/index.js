@@ -3512,11 +3512,6 @@ app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
 });
 
-    
-const port = process.env.PORT || 3000;
-app.listen(port, () => {
-    console.log(`API 99Burger rodando na porta ${port}`);
-});
 
 
 
