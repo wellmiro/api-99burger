@@ -3365,6 +3365,7 @@ function calcularFrete(m, zonas, estab, lat, lng) {
 }
 
 // ---------- GET configuração + zonas (tela do motoboy) ----------
+// ---------- GET configuração + zonas (tela do motoboy) ----------
 app.get("/motoboy/config", token.ValidateJWT, async function (req, res) {
     try {
         const m = await getMotoristaDoToken(req);
@@ -3380,6 +3381,7 @@ app.get("/motoboy/config", token.ValidateJWT, async function (req, res) {
         );
         return res.status(200).json({
             config: {
+                telefone: m.telefone || "",
                 modo_cobranca: m.modo_cobranca, valor_km: m.valor_km, valor_fixo: m.valor_fixo,
                 usa_zonas: !!m.usa_zonas, fallback_modo: m.fallback_modo, fallback_valor: m.fallback_valor
             },
@@ -3395,7 +3397,7 @@ app.put("/motoboy/config", token.ValidateJWT, async function (req, res) {
         const m = await getMotoristaDoToken(req);
         if (!m) return res.status(404).json({ error: "Motorista não encontrado." });
 
-        const { modo_cobranca, valor_km, valor_fixo, usa_zonas, fallback_modo, fallback_valor } = req.body;
+        const { telefone, modo_cobranca, valor_km, valor_fixo, usa_zonas, fallback_modo, fallback_valor } = req.body;
         if (!["KM", "FIXO"].includes(modo_cobranca)) return res.status(400).json({ error: "modo_cobranca inválido." });
         if (!["KM", "FIXO"].includes(fallback_modo)) return res.status(400).json({ error: "fallback_modo inválido." });
 
@@ -3410,14 +3412,17 @@ app.put("/motoboy/config", token.ValidateJWT, async function (req, res) {
             return res.status(400).json({ error: "Valor fixo mínimo é R$ 1,00." });
         }
 
+        const telLimpo = telefone ? String(telefone).replace(/\D/g, "").slice(0, 20) : m.telefone;
+
         await executeQuery(
-            `UPDATE motorista SET modo_cobranca = ?, valor_km = ?, valor_fixo = ?, usa_zonas = ?,
+            `UPDATE motorista SET telefone = ?, modo_cobranca = ?, valor_km = ?, valor_fixo = ?, usa_zonas = ?,
              fallback_modo = ?, fallback_valor = ? WHERE id_motorista = ?`,
-            [modo_cobranca, num(valor_km), num(valor_fixo), usa_zonas ? 1 : 0, fallback_modo, num(fallback_valor), m.id_motorista]
+            [telLimpo || null, modo_cobranca, num(valor_km), num(valor_fixo), usa_zonas ? 1 : 0, fallback_modo, num(fallback_valor), m.id_motorista]
         );
         return res.status(200).json({ message: "Configuração salva com sucesso!" });
     } catch (e) { return res.status(500).json({ error: e.message }); }
 });
+
 
 // ---------- POST zona ----------
 app.post("/motoboy/zonas", token.ValidateJWT, async function (req, res) {
@@ -3583,6 +3588,41 @@ app.get("/geocode/buscar", async function (req, res) {
         return res.status(502).json({ error: "Serviço de busca indisponível." });
     }
 });
+
+// ---------- GET motoboy online do estabelecimento (público, pelo slug) ----------
+app.get("/cardapio_digital/:slug/motoboy-ativo", async function (req, res) {
+    try {
+        const rows = await executeQuery(
+            `SELECT u.nome, m.telefone
+             FROM motorista m
+             INNER JOIN usuario u ON u.id_usuario = m.id_usuario
+             INNER JOIN estabelecimento e ON e.id_estabelecimento = m.id_estabelecimento
+             WHERE e.slug = ?
+               AND m.status_trabalho = 'online'
+               AND m.telefone IS NOT NULL
+               AND TRIM(m.telefone) <> ''
+             ORDER BY m.id_motorista DESC
+             LIMIT 1`,
+            [req.params.slug]
+        );
+
+        res.set("Cache-Control", "no-store");
+
+        if (rows.length === 0) return res.status(200).json({ online: false });
+
+        const primeiroNome = String(rows[0].nome || "").trim().split(/\s+/)[0];
+        if (!primeiroNome) return res.status(200).json({ online: false });
+
+        return res.status(200).json({
+            online: true,
+            primeiro_nome: primeiroNome,
+            telefone: String(rows[0].telefone).trim()
+        });
+    } catch (e) {
+        return res.status(500).json({ error: e.message });
+    }
+});
+
 
 
 const port = process.env.PORT || 3000;
