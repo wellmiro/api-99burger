@@ -3495,11 +3495,30 @@ app.get("/cardapio_digital/:slug/frete", async function (req, res) {
 
         if (!motoboyConfigurado) {
             // compatibilidade: regra antiga do estabelecimento (taxa_base + preco_km)
+            const km = (haversineMetros(Number(estab.latitude), Number(estab.longitude), lat, lng) / 1000) * FATOR_ROTA;
+            const v = round2(Number(estab.taxa_base || 0) + km * Number(estab.preco_km || 0));
+            return res.status(200).json({ valor: v, origem: "estabelecimento", zona: null, distancia_km: round2(km) });
+        }
 
+        const zonas = m.usa_zonas
+            ? await executeQuery("SELECT * FROM motorista_rota_zona WHERE id_motorista = ? AND ativo = 1", [m.id_motorista])
+            : [];
+        return res.status(200).json(calcularFrete(m, zonas, estab, lat, lng));
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+});
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
 });
+
+    
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+    console.log(`API 99Burger rodando na porta ${port}`);
+});
+
+
+
 
 
