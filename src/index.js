@@ -3507,6 +3507,84 @@ app.get("/cardapio_digital/:slug/frete", async function (req, res) {
     } catch (e) { return res.status(500).json({ error: e.message }); }
 });
 
+// =====================================================================
+// COLE NO index.js (junto dos outros endpoints, antes do app.listen)
+// Autocomplete de endereço. Público: serve tela do motoboy e cardápio digital.
+// Usa o Photon (OpenStreetMap, feito para busca enquanto digita) através do
+// próprio backend, assim dá para ter cache, limite de uso e trocar de provedor
+// sem mexer no frontend.
+// =====================================================================
+
+const GEO_URL = "https://photon.komoot.io/api/";
+const GEO_TTL_MS = 10 * 60 * 1000;      // cache de 10 min
+const geoCache = new Map();              // chave -> { t, data }
+const geoHits = new Map();               // ip -> [timestamps]
+
+function geoLimiteExcedido(ip) {
+    const agora = Date.now();
+    const lista = (geoHits.get(ip) || []).filter((t) => agora - t < 60000);
+    lista.push(agora);
+    geoHits.set(ip, lista);
+    return lista.length > 40;            // 40 buscas por minuto por IP
+}
+
+function geoFormatar(f) {
+    const p = f.properties || {};
+    const [lng, lat] = f.geometry.coordinates;
+    const rua = p.street ? [p.street, p.housenumber].filter(Boolean).join(", ") : null;
+    const bairro = p.district || p.suburb || p.locality || null;
+    const cidade = p.city || p.town || p.village || p.county || null;
+    const principal = p.name || rua || bairro || cidade;
+    const secundario = [p.name ? rua : null, bairro, cidade, p.state]
+        .filter((x) => x && x !== principal)
+        .join(", ");
+    return {
+        principal, secundario, bairro,
+        label: secundario ? `${principal}, ${secundario}` : principal,
+        lat, lng,
+    };
+}
+
+// GET /geocode/buscar?q=rua das flores&lat=-23.81&lng=-47.71
+app.get("/geocode/buscar", async function (req, res) {
+    try {
+        const q = String(req.query.q || "").trim().slice(0, 120);
+        if (q.length < 3) return res.status(200).json([]);
+
+        const ip = (req.headers["x-forwarded-for"] || req.ip || "").toString().split(",")[0].trim();
+        if (geoLimiteExcedido(ip)) return res.status(429).json({ error: "Muitas buscas. Aguarde um instante." });
+
+        const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+        const temBias = !isNaN(lat) && !isNaN(lng);
+
+        const chave = `${q.toLowerCase()}|${temBias ? lat.toFixed(2) + "," + lng.toFixed(2) : ""}`;
+        const cacheado = geoCache.get(chave);
+        if (cacheado && Date.now() - cacheado.t < GEO_TTL_MS) return res.status(200).json(cacheado.data);
+
+        const params = { q, limit: 10 };
+        if (temBias) { params.lat = lat; params.lon = lng; }
+
+        const r = await axios.get(GEO_URL, {
+            params, timeout: 5000,
+            headers: { "User-Agent": "99Burger/1.0 (contato do estabelecimento)" },
+        });
+
+        const vistos = new Set();
+        const lista = (r.data.features || [])
+            .filter((f) => (f.properties || {}).countrycode === "BR")
+            .map(geoFormatar)
+            .filter((s) => s.principal && !vistos.has(s.label) && vistos.add(s.label))
+            .slice(0, 6);
+
+        if (geoCache.size > 500) geoCache.clear();
+        geoCache.set(chave, { t: Date.now(), data: lista });
+        return res.status(200).json(lista);
+    } catch (e) {
+        return res.status(502).json({ error: "Serviço de busca indisponível." });
+    }
+});
+
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
