@@ -3307,9 +3307,199 @@ async function recalcularEstoqueProduto(id_produto, id_estabelecimento) {
     return estoqueReal;
 }
 
+// =====================================================================
+// ROTAS DE CONFIGURAÇÃO DE TAXAS E ZONAS DO MOTOBOY
+// =====================================================================
+
+const FATOR_ROTA = 1.0; // distância em linha reta x ruas reais. Ex: 1.25 para compensar curvas
+
+function haversineMetros(lat1, lng1, lat2, lng2) {
+    const R = 6371000;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const dLat = toRad(lat2 - lat1);
+    const dLng = toRad(lng2 - lng1);
+    const a = Math.sin(dLat / 2) ** 2 +
+              Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+    return R * 2 * Math.asin(Math.sqrt(a));
+}
+
+const num = (v) => (v === null || v === undefined || v === "" ? null : Number(v));
+const round2 = (n) => Math.round(n * 100) / 100;
+
+async function getMotoristaDoToken(req) {
+    const r = await executeQuery(
+        "SELECT * FROM motorista WHERE id_usuario = ? LIMIT 1", [req.id_usuario]
+    );
+    return r[0] || null;
+}
+
+function validarZona(b) {
+    const lat = num(b.latitude), lng = num(b.longitude);
+    const raio = parseInt(b.raio_metros, 10), valor = num(b.valor);
+    if (lat === null || lng === null || lat < -90 || lat > 90 || lng < -180 || lng > 180)
+        return "Coordenadas inválidas.";
+    if (!Number.isInteger(raio) || raio < 100 || raio > 30000)
+        return "Raio deve estar entre 100 m e 30 km.";
+    if (valor === null || isNaN(valor) || valor < 1)
+        return "Valor mínimo da zona é R$ 1,00.";
+    return null;
+}
+
+// Regra única de cálculo (usada pelo cardápio)
+function calcularFrete(m, zonas, estab, lat, lng) {
+    const distKm = (haversineMetros(Number(estab.latitude), Number(estab.longitude), lat, lng) / 1000) * FATOR_ROTA;
+
+    const porKm = (v) => round2(distKm * Number(v || 0));
+
+    if (m.usa_zonas) {
+        const hit = zonas
+            .filter(z => haversineMetros(Number(z.latitude), Number(z.longitude), lat, lng) <= z.raio_metros)
+            .sort((a, b) => a.raio_metros - b.raio_metros || a.valor - b.valor)[0];
+        if (hit) return { valor: round2(Number(hit.valor)), origem: "zona", zona: hit.nome_zona || `Zona #${hit.id_zona}`, distancia_km: round2(distKm) };
+        const v = m.fallback_modo === "KM" ? porKm(m.fallback_valor) : round2(Number(m.fallback_valor || 0));
+        return { valor: v, origem: m.fallback_modo === "KM" ? "fallback_km" : "fallback_fixo", zona: null, distancia_km: round2(distKm) };
+    }
+    if (m.modo_cobranca === "FIXO")
+        return { valor: round2(Number(m.valor_fixo || 0)), origem: "fixo", zona: null, distancia_km: round2(distKm) };
+    return { valor: porKm(m.valor_km), origem: "km", zona: null, distancia_km: round2(distKm) };
+}
+
+// ---------- GET configuração + zonas (tela do motoboy) ----------
+app.get("/motoboy/config", token.ValidateJWT, async function (req, res) {
+    try {
+        const m = await getMotoristaDoToken(req);
+        if (!m) return res.status(404).json({ error: "Motorista não encontrado." });
+
+        const estab = await executeQuery(
+            "SELECT nome, latitude, longitude FROM estabelecimento WHERE id_estabelecimento = ?",
+            [req.id_estabelecimento]
+        );
+        const zonas = await executeQuery(
+            "SELECT id_zona, nome_zona, latitude, longitude, raio_metros, valor, ativo FROM motorista_rota_zona WHERE id_motorista = ? AND ativo = 1 ORDER BY id_zona",
+            [m.id_motorista]
+        );
+        return res.status(200).json({
+            config: {
+                modo_cobranca: m.modo_cobranca, valor_km: m.valor_km, valor_fixo: m.valor_fixo,
+                usa_zonas: !!m.usa_zonas, fallback_modo: m.fallback_modo, fallback_valor: m.fallback_valor
+            },
+            estabelecimento: estab[0] || null,
+            zonas
+        });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// ---------- PUT configuração ----------
+app.put("/motoboy/config", token.ValidateJWT, async function (req, res) {
+    try {
+        const m = await getMotoristaDoToken(req);
+        if (!m) return res.status(404).json({ error: "Motorista não encontrado." });
+
+        const { modo_cobranca, valor_km, valor_fixo, usa_zonas, fallback_modo, fallback_valor } = req.body;
+        if (!["KM", "FIXO"].includes(modo_cobranca)) return res.status(400).json({ error: "modo_cobranca inválido." });
+        if (!["KM", "FIXO"].includes(fallback_modo)) return res.status(400).json({ error: "fallback_modo inválido." });
+
+        if (usa_zonas) {
+            if (num(fallback_valor) === null || num(fallback_valor) <= 0)
+                return res.status(400).json({ error: "Informe o valor de contingência (fora das zonas)." });
+            const qtd = await executeQuery("SELECT COUNT(*) AS n FROM motorista_rota_zona WHERE id_motorista = ? AND ativo = 1", [m.id_motorista]);
+            if (qtd[0].n === 0) return res.status(400).json({ error: "Cadastre ao menos uma zona ou desative o modo por zonas." });
+        } else if (modo_cobranca === "KM" && !(num(valor_km) > 0)) {
+            return res.status(400).json({ error: "Informe o valor por km." });
+        } else if (modo_cobranca === "FIXO" && !(num(valor_fixo) >= 1)) {
+            return res.status(400).json({ error: "Valor fixo mínimo é R$ 1,00." });
+        }
+
+        await executeQuery(
+            `UPDATE motorista SET modo_cobranca = ?, valor_km = ?, valor_fixo = ?, usa_zonas = ?,
+             fallback_modo = ?, fallback_valor = ? WHERE id_motorista = ?`,
+            [modo_cobranca, num(valor_km), num(valor_fixo), usa_zonas ? 1 : 0, fallback_modo, num(fallback_valor), m.id_motorista]
+        );
+        return res.status(200).json({ message: "Configuração salva com sucesso!" });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// ---------- POST zona ----------
+app.post("/motoboy/zonas", token.ValidateJWT, async function (req, res) {
+    try {
+        const m = await getMotoristaDoToken(req);
+        if (!m) return res.status(404).json({ error: "Motorista não encontrado." });
+        const erro = validarZona(req.body);
+        if (erro) return res.status(400).json({ error: erro });
+
+        const { nome_zona, latitude, longitude, raio_metros, valor } = req.body;
+        const r = await executeQuery(
+            `INSERT INTO motorista_rota_zona (id_motorista, nome_zona, latitude, longitude, raio_metros, valor)
+             VALUES (?, ?, ?, ?, ?, ?)`,
+            [m.id_motorista, (nome_zona || "").trim().slice(0, 60) || null, latitude, longitude, parseInt(raio_metros, 10), valor]
+        );
+        return res.status(201).json({ id_zona: r.insertId, message: "Zona adicionada!" });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// ---------- PUT zona ----------
+app.put("/motoboy/zonas/:id", token.ValidateJWT, async function (req, res) {
+    try {
+        const m = await getMotoristaDoToken(req);
+        if (!m) return res.status(404).json({ error: "Motorista não encontrado." });
+        const erro = validarZona(req.body);
+        if (erro) return res.status(400).json({ error: erro });
+
+        const { nome_zona, latitude, longitude, raio_metros, valor } = req.body;
+        const r = await executeQuery(
+            `UPDATE motorista_rota_zona SET nome_zona = ?, latitude = ?, longitude = ?, raio_metros = ?, valor = ?
+             WHERE id_zona = ? AND id_motorista = ?`,
+            [(nome_zona || "").trim().slice(0, 60) || null, latitude, longitude, parseInt(raio_metros, 10), valor, req.params.id, m.id_motorista]
+        );
+        if (r.affectedRows === 0) return res.status(404).json({ error: "Zona não encontrada." });
+        return res.status(200).json({ message: "Zona atualizada!" });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// ---------- DELETE zona ----------
+app.delete("/motoboy/zonas/:id", token.ValidateJWT, async function (req, res) {
+    try {
+        const m = await getMotoristaDoToken(req);
+        if (!m) return res.status(404).json({ error: "Motorista não encontrado." });
+        const r = await executeQuery(
+            "DELETE FROM motorista_rota_zona WHERE id_zona = ? AND id_motorista = ?",
+            [req.params.id, m.id_motorista]
+        );
+        if (r.affectedRows === 0) return res.status(404).json({ error: "Zona não encontrada." });
+        return res.status(200).json({ message: "Zona removida!" });
+    } catch (e) { return res.status(500).json({ error: e.message }); }
+});
+
+// ---------- PÚBLICO: frete para o cardápio digital ----------
+// GET /cardapio_digital/:slug/frete?lat=-23.81&lng=-47.72
+app.get("/cardapio_digital/:slug/frete", async function (req, res) {
+    try {
+        const lat = parseFloat(req.query.lat), lng = parseFloat(req.query.lng);
+        if (isNaN(lat) || isNaN(lng)) return res.status(400).json({ error: "lat e lng obrigatórios." });
+
+        const est = await executeQuery(
+            "SELECT id_estabelecimento, latitude, longitude, taxa_base, preco_km FROM estabelecimento WHERE slug = ?",
+            [req.params.slug]
+        );
+        if (est.length === 0) return res.status(404).json({ error: "Estabelecimento não encontrado." });
+        const estab = est[0];
+
+        // motoboy ativo: online primeiro; senão o mais recente
+        const mots = await executeQuery(
+            `SELECT * FROM motorista WHERE id_estabelecimento = ?
+             ORDER BY (status_trabalho = 'online') DESC, id_motorista DESC LIMIT 1`,
+            [estab.id_estabelecimento]
+        );
+        const m = mots[0];
+        const motoboyConfigurado = m && (m.usa_zonas || (m.modo_cobranca === "KM" ? num(m.valor_km) > 0 : num(m.valor_fixo) >= 0 && m.valor_fixo !== null));
+
+        if (!motoboyConfigurado) {
+            // compatibilidade: regra antiga do estabelecimento (taxa_base + preco_km)
+
+
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
 });
 
-//versão de manda pix
+
