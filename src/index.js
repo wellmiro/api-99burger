@@ -997,7 +997,17 @@ app.get('/pedidos/historico/:slug/:session_id', (req, res) => {
             p.status,
             DATE_FORMAT(p.dt_pedido, '%d/%m/%Y %H:%i') AS dt_pedido,
             p.vl_total,
-            p.forma_pagamento
+            p.forma_pagamento,
+            CASE
+                WHEN p.status = 'W' THEN 1
+                WHEN p.status = 'A' AND EXISTS (
+                    SELECT 1 FROM notificacoes n
+                     WHERE n.id_pedido = p.id_pedido
+                       AND n.tipo = 'CARDAPIO_DIGITAL'
+                       AND n.status = 'A'
+                ) THEN 1
+                ELSE 0
+            END AS pode_cancelar
         FROM pedido p
         JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
         WHERE e.slug = ? AND p.session_id = ?
@@ -1008,6 +1018,146 @@ app.get('/pedidos/historico/:slug/:session_id', (req, res) => {
         if (err) return res.status(500).json(err);
         res.json(result);
     });
+});
+
+// Cancelamento pelo CLIENTE (histórico / tela do QR Code).
+// Regra: só cancela enquanto o atendente NÃO aceitou no Delphi, ou seja, enquanto a notificação
+// do pedido ainda está com status 'A' (o Delphi muda para 'L' ao aceitar/recusar).
+// Pedido Pix aguardando pagamento ('W') ainda não tem notificação e pode ser cancelado.
+app.post('/pedidos/cancelar-cliente', async (req, res) => {
+    const { id_pedido, slug, session_id } = req.body || {};
+    if (!id_pedido || !slug || !session_id) {
+        return res.status(400).json({ error: 'Dados insuficientes para cancelar o pedido.' });
+    }
+
+    let obtida;
+    try {
+        obtida = await obterConexaoTransacao();
+    } catch (e) {
+        return res.status(500).json({ error: 'Não foi possível cancelar agora. Tente novamente.' });
+    }
+    const { conn, liberar } = obtida;
+
+    try {
+        await queryConn(conn, 'START TRANSACTION');
+
+        // Trava o pedido: o aceite do Delphi e o cancelamento do cliente entram em fila aqui
+        const peds = await queryConn(
+            conn,
+            `SELECT id_pedido, id_estabelecimento, status, forma_pagamento, vl_total, mp_payment_id
+               FROM pedido
+              WHERE id_pedido = ? AND session_id = ?
+              FOR UPDATE`,
+            [id_pedido, session_id]
+        );
+        if (peds.length === 0) {
+            await queryConn(conn, 'ROLLBACK');
+            return res.status(404).json({ error: 'Pedido não encontrado.' });
+        }
+        const pedido = peds[0];
+
+        const estab = await queryConn(
+            conn,
+            'SELECT slug, mp_access_token FROM estabelecimento WHERE id_estabelecimento = ?',
+            [pedido.id_estabelecimento]
+        );
+        if (estab.length === 0 || estab[0].slug !== slug) {
+            await queryConn(conn, 'ROLLBACK');
+            return res.status(404).json({ error: 'Pedido não encontrado.' });
+        }
+        pedido.mp_access_token = estab[0].mp_access_token;
+
+        if (pedido.status === 'C') {
+            await queryConn(conn, 'COMMIT');
+            return res.status(200).json({ sucesso: true, ja_cancelado: true });
+        }
+
+        if (pedido.status === 'A') {
+            const notifs = await queryConn(
+                conn,
+                `SELECT id_notificacao, status FROM notificacoes
+                  WHERE id_pedido = ? AND tipo = 'CARDAPIO_DIGITAL'
+                  ORDER BY id_notificacao DESC LIMIT 1
+                  FOR UPDATE`,
+                [id_pedido]
+            );
+            if (notifs.length === 0 || notifs[0].status !== 'A') {
+                await queryConn(conn, 'ROLLBACK');
+                return res.status(409).json({
+                    codigo: 'PEDIDO_JA_ACEITO',
+                    error: 'O estabelecimento já aceitou o seu pedido, então não é mais possível cancelar por aqui.'
+                });
+            }
+        } else if (pedido.status !== 'W') {
+            await queryConn(conn, 'ROLLBACK');
+            return res.status(409).json({
+                codigo: 'PEDIDO_JA_ACEITO',
+                error: 'O estabelecimento já aceitou o seu pedido, então não é mais possível cancelar por aqui.'
+            });
+        }
+
+        // Pix pago => estorna; Pix pendente => cancela a cobrança. Se falhar, lança erro (nada é cancelado).
+        const mpStatusNovo = await estornarPixDoPedido(pedido, id_pedido);
+
+        await queryConn(
+            conn,
+            `UPDATE notificacoes SET status = 'C'
+              WHERE id_pedido = ? AND tipo = 'CARDAPIO_DIGITAL' AND status = 'A'`,
+            [id_pedido]
+        );
+
+        if (mpStatusNovo) {
+            await queryConn(conn, `UPDATE pedido SET status = 'C', mp_status = ? WHERE id_pedido = ?`, [mpStatusNovo, id_pedido]);
+        } else {
+            await queryConn(conn, `UPDATE pedido SET status = 'C' WHERE id_pedido = ?`, [id_pedido]);
+        }
+
+        await queryConn(conn, 'COMMIT');
+
+        try {
+            if (pedido.mp_payment_id && mpStatusNovo) {
+                await liberarCompensacoes({ mpPaymentId: String(pedido.mp_payment_id) });
+            }
+            await cancelarDebitoRepasse(id_pedido);
+        } catch (ledgerErr) {
+            console.error(`[Ledger] Erro ao reverter repasse (cancelamento do cliente, pedido ${id_pedido}):`, ledgerErr.message);
+        }
+
+        return res.status(200).json({ sucesso: true, reembolsado: mpStatusNovo === 'refunded' });
+    } catch (err) {
+        try { await queryConn(conn, 'ROLLBACK'); } catch (e) { /* ignora */ }
+        if (err.codigoHttp) {
+            return res.status(err.codigoHttp).json({ error: err.message });
+        }
+        console.error('Erro em /pedidos/cancelar-cliente:', err);
+        return res.status(500).json({ error: 'Erro ao cancelar o pedido. Tente novamente.' });
+    } finally {
+        liberar();
+    }
+});
+
+// Saldo devedor (dinheiro/cartão) ainda não compensado da loja logada
+app.get('/repasse/saldo', token.ValidateJWT, async (req, res) => {
+    try {
+        const r = await executeQuery(
+            `SELECT COALESCE(SUM(vl_motoboy_aberto), 0)  AS motoboy_a_compensar,
+                    COALESCE(SUM(vl_comissao_aberto), 0) AS comissao_a_compensar,
+                    COUNT(*) AS pedidos_em_aberto
+               FROM repasse_lancamento
+              WHERE id_estabelecimento = ? AND status = 'ABERTO'`,
+            [req.id_estabelecimento]
+        );
+        const x = r[0] || {};
+        return res.json({
+            motoboy_a_compensar: Number(x.motoboy_a_compensar || 0),
+            comissao_a_compensar: Number(x.comissao_a_compensar || 0),
+            total: Number(x.motoboy_a_compensar || 0) + Number(x.comissao_a_compensar || 0),
+            pedidos_em_aberto: Number(x.pedidos_em_aberto || 0)
+        });
+    } catch (e) {
+        console.error('Erro em /repasse/saldo:', e.message);
+        return res.status(500).json({ error: 'Erro ao consultar o saldo de repasse.' });
+    }
 });
 
 app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
@@ -1827,8 +1977,16 @@ app.put("/corridas/:id_corrida/status", token.ValidateJWT, async function (req, 
             updatePlaca = null; // Libera o pedido para outro motoboy
         }
 
-        const sql = "UPDATE pedido SET status = ?, placa = ? WHERE id_pedido = ?";
+        const sql = "UPDATE pedido SET status = ?, placa = ? WHERE id_pedido = ? AND status <> 'C'";
         await executeQuery(sql, [novoStatus, updatePlaca, id_pedido]);
+
+        if (novoStatus === 'F') {
+            try {
+                await registrarDebitoRepasse(id_pedido);
+            } catch (ledgerErr) {
+                console.error(`[Ledger] Erro ao registrar repasse (corrida ${id_pedido}):`, ledgerErr.message);
+            }
+        }
 
         return res.status(200).json({ message: "Status da corrida atualizado com sucesso!" });
     } catch (e) {
@@ -1945,7 +2103,7 @@ app.post('/notificacoes/publico', async (req, res) => {
     if (id_pedido) {
         try {
             const ped = await executeQuery(
-                `SELECT p.mp_payment_id, p.forma_pagamento, e.mp_access_token
+                `SELECT p.status, p.mp_payment_id, p.forma_pagamento, e.mp_access_token
                    FROM pedido p
                    INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
                   WHERE p.id_pedido = ? AND p.id_estabelecimento = ?
@@ -1955,6 +2113,11 @@ app.post('/notificacoes/publico', async (req, res) => {
 
             if (ped.length > 0) {
                 const pedido = ped[0];
+
+                // Cliente cancelou antes da notificação chegar: não alarma o atendente
+                if (pedido.status === 'C') {
+                    return res.status(409).json({ error: 'Pedido cancelado pelo cliente.', cancelado: true });
+                }
                 const ehPix = pedido.forma_pagamento && pedido.forma_pagamento.toUpperCase().includes('PIX');
 
                 if (ehPix && pedido.mp_payment_id) {
@@ -2352,6 +2515,14 @@ app.post('/pedidos/publico', async (req, res) => {
         return res.status(400).json({ error: 'Pedido inválido: O carrinho está vazio ou o valor total é zero.' });
     }
 
+    // 🛑 Nenhum item pode ter preço/quantidade/total zerado (bug do botão "Validando" no celular)
+    const itemInvalido = p.itens.find(i =>
+        !(Number(i.vl_unitario) > 0) || !(Number(i.qtd) > 0) || !(Number(i.vl_total) > 0)
+    );
+    if (itemInvalido) {
+        return res.status(400).json({ error: 'Pedido inválido: há item com valor zerado. Remova-o da sacola e adicione novamente.' });
+    }
+
     if (!p.slug) {
         return res.status(400).json({ error: 'Slug do estabelecimento é obrigatório' });
     }
@@ -2514,59 +2685,53 @@ const atualizarStatusPedido = async (req, res) => {
             return res.json({ sucesso: true, message: "Status já estava atualizado." });
         }
 
-        // 1. CANCELADO: devolve o dinheiro do Pix (se pago) ou cancela a cobrança (se pendente)
-        let mpStatusNovo = null;
-        if (status === 'C') {
-            const ehPix = pedido.forma_pagamento && pedido.forma_pagamento.toUpperCase().includes("PIX");
-
-            if (pedido.mp_payment_id && Number(pedido.vl_total) > 0 && ehPix) {
-                // Pega o token da loja gravado no banco ou o .env como plano B
-                const tokenMP = pedido.mp_access_token || process.env.MP_ACCESS_TOKEN;
-                const headersMP = { 'Authorization': `Bearer ${tokenMP}` };
-
-                try {
-                    const consulta = await axios.get(
-                        `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}`,
-                        { headers: headersMP }
-                    );
-                    const statusMP = consulta.data.status;
-
-                    if (statusMP === 'approved') {
-                        await axios.post(
-                            `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}/refunds`,
-                            {},
-                            { headers: { ...headersMP, 'X-Idempotency-Key': `refund-pedido-${id_pedido}` } }
-                        );
-                        mpStatusNovo = 'refunded';
-                        console.log(`✅ Pix do pedido ${id_pedido} estornado com sucesso usando a conta da loja!`);
-                    } else if (statusMP === 'pending' || statusMP === 'in_process') {
-                        await axios.put(
-                            `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}`,
-                            { status: 'cancelled' },
-                            { headers: headersMP }
-                        );
-                        mpStatusNovo = 'cancelled';
-                        console.log(`🚫 Cobrança Pix do pedido ${id_pedido} cancelada no Mercado Pago.`);
-                    } else {
-                        console.log(`ℹ️ Pedido ${id_pedido}: pagamento MP está '${statusMP}', nada a estornar.`);
-                    }
-                } catch (mpErr) {
-                    console.error(`❌ Erro na API do Mercado Pago (pedido ${id_pedido}):`, mpErr.response?.data || mpErr.message);
-                }
-            }
+        // Pedido cancelado (ex.: pelo cliente antes de o atendente aceitar) não volta a andar
+        if (statusAnterior === 'C' && status !== 'C') {
+            return res.status(409).json({ error: "Pedido cancelado. Não é possível alterar o status." });
         }
 
-        // 2. Atualiza o status no banco
+        // 1. CANCELADO: devolve o dinheiro do Pix (se pago) ou cancela a cobrança (se pendente).
+        //    Se o estorno falhar, lança erro e o pedido NÃO é marcado como cancelado.
+        let mpStatusNovo = null;
+        if (status === 'C') {
+            mpStatusNovo = await estornarPixDoPedido(pedido, id_pedido);
+        }
+
+        // 2. Atualiza o status no banco (nunca sobrescreve um pedido que acabou de ser cancelado)
+        const travaCancelado = status === 'C' ? '' : " AND status <> 'C'";
+        let upd;
         if (mpStatusNovo) {
-            await executeQuery(
-                "UPDATE pedido SET status = ?, mp_status = ? WHERE id_pedido = ? AND id_estabelecimento = ?",
+            upd = await executeQuery(
+                "UPDATE pedido SET status = ?, mp_status = ? WHERE id_pedido = ? AND id_estabelecimento = ?" + travaCancelado,
                 [status, mpStatusNovo, id_pedido, id_estabelecimento]
             );
         } else {
-            await executeQuery(
-                "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?",
+            upd = await executeQuery(
+                "UPDATE pedido SET status = ? WHERE id_pedido = ? AND id_estabelecimento = ?" + travaCancelado,
                 [status, id_pedido, id_estabelecimento]
             );
+        }
+        if (upd.affectedRows === 0) {
+            return res.status(409).json({ error: "Pedido cancelado. Não é possível alterar o status." });
+        }
+
+        // 2b. Ledger de repasse (falha aqui nunca derruba a atualização do pedido)
+        let repasse = null;
+        if (status === 'C') {
+            try {
+                if (pedido.mp_payment_id && mpStatusNovo) {
+                    await liberarCompensacoes({ mpPaymentId: String(pedido.mp_payment_id) });
+                }
+                await cancelarDebitoRepasse(id_pedido);
+            } catch (ledgerErr) {
+                console.error(`[Ledger] Erro ao reverter repasse do pedido ${id_pedido}:`, ledgerErr.message);
+            }
+        } else if (status === 'F' && statusAnterior !== 'F') {
+            try {
+                repasse = await registrarDebitoRepasse(id_pedido, id_estabelecimento);
+            } catch (ledgerErr) {
+                console.error(`[Ledger] Erro ao registrar repasse do pedido ${id_pedido}:`, ledgerErr.message);
+            }
         }
 
         // 3. Finalizado ('F') e ainda NÃO estava finalizado: dá baixa no estoque
@@ -2609,9 +2774,12 @@ const atualizarStatusPedido = async (req, res) => {
             }
         }
 
-        return res.json({ sucesso: true, message: "Status do pedido atualizado com sucesso!" });
+        return res.json({ sucesso: true, message: "Status do pedido atualizado com sucesso!", repasse });
 
     } catch (error) {
+        if (error.codigoHttp) {
+            return res.status(error.codigoHttp).json({ error: error.message });
+        }
         console.error("Erro ao atualizar status do pedido:", error);
         return res.status(500).json({ error: "Erro ao atualizar status do pedido." });
     }
@@ -3019,27 +3187,309 @@ function executeQuery(sql, params = []) {
     });
 }
 
-// Taxa da plataforma 99Burger (application_fee do Mercado Pago)
-// Até R$ 10,00 => 1% | Acima de R$ 10,00 => 2%
-// O Mercado Pago cobra a taxa dele do lojista, separado desta.
+// ===================================================================================
+// TAXA DA PLATAFORMA 99BURGER + LEDGER DE REPASSE (conta corrente de compensação)
+//
+// Pix online : application_fee = comissão + taxa do motoboy (+ saldo devedor antigo, se houver)
+// Dinheiro/Cartão na entrega: ao finalizar ('F') grava um DÉBITO em repasse_lancamento
+// Próximo Pix da loja: o débito é RESERVADO e embutido no application_fee; ao aprovar vira
+// CONFIRMADO; se o Pix for cancelado/expirar/for estornado, a reserva é LIBERADA (volta ao débito).
+//
+// Variáveis de ambiente (todas opcionais):
+//   COMISSAO_LIMITE_FAIXA=100          pedidos até esse valor pagam 1%, acima pagam 2%
+//   SPLIT_INCLUI_TAXA_MOTOBOY=true     inclui a taxa de entrega no application_fee
+//   APPLICATION_FEE_TETO_PERCENTUAL=50 teto (% do Pix) para o ABATIMENTO de dívida antiga
+//   PIX_EXPIRA_MINUTOS=60              validade do QR Code (0 = padrão do Mercado Pago)
+// ===================================================================================
+const crypto = require('crypto');
+
+const LIMITE_FAIXA_COMISSAO = Number(process.env.COMISSAO_LIMITE_FAIXA || 100);
+const SPLIT_INCLUI_TAXA_MOTOBOY = String(process.env.SPLIT_INCLUI_TAXA_MOTOBOY || 'true').toLowerCase() !== 'false';
+const TETO_ABATIMENTO_PERCENTUAL = Number(process.env.APPLICATION_FEE_TETO_PERCENTUAL || 50);
+const PIX_EXPIRA_MINUTOS = Number(process.env.PIX_EXPIRA_MINUTOS || 60);
+
+function emCentavos(v) { return Math.round((Number(v) || 0) * 100); }
+function deCentavos(c) { return Number((c / 100).toFixed(2)); }
+
+// Até LIMITE => 1% | Acima do LIMITE => 2%. O Mercado Pago cobra a taxa dele do lojista, separado desta.
 function calcularTaxaPlataforma(valor) {
-    const percentual = valor > 10 ? 0.02 : 0.01;
-    return Math.round((valor * percentual + Number.EPSILON) * 100) / 100;
+    const percentual = Number(valor) > LIMITE_FAIXA_COMISSAO ? 0.02 : 0.01;
+    return deCentavos(Math.round(emCentavos(valor) * percentual));
+}
+
+// date_of_expiration do Mercado Pago (relógio de Brasília, sem horário de verão)
+function dataExpiracaoPix(minutos) {
+    const alvo = new Date(Date.now() + minutos * 60 * 1000 - 3 * 60 * 60 * 1000);
+    return alvo.toISOString().replace('Z', '-03:00');
+}
+
+// Grava o débito (taxa do motoboy + comissão) de um pedido do cardápio digital pago FORA do Pix online.
+// Idempotente (UNIQUE id_pedido). Chamado quando o pedido vira 'F'.
+async function registrarDebitoRepasse(id_pedido, id_estabelecimento = null) {
+    const params = [id_pedido];
+    let filtroEstab = '';
+    if (id_estabelecimento) {
+        filtroEstab = 'AND p.id_estabelecimento = ?';
+        params.push(id_estabelecimento);
+    }
+
+    const rows = await executeQuery(
+        `SELECT p.id_pedido, p.id_estabelecimento, p.forma_pagamento, p.vl_total, p.vl_entrega,
+                p.local_consumo, p.session_id, p.mp_payment_id, p.placa, e.mp_access_token
+           FROM pedido p
+           INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+          WHERE p.id_pedido = ? ${filtroEstab}`,
+        params
+    );
+    if (rows.length === 0) return { registrado: false, motivo: 'pedido_nao_encontrado' };
+    const p = rows[0];
+
+    if (!p.session_id) return { registrado: false, motivo: 'fora_do_cardapio_digital' };
+
+    const ehPix = String(p.forma_pagamento || '').toUpperCase().includes('PIX');
+    if (ehPix && p.mp_payment_id) return { registrado: false, motivo: 'pix_online_ja_dividido' };
+
+    const lojaComSplit = !!p.mp_access_token && p.mp_access_token !== process.env.MP_ACCESS_TOKEN;
+    if (!lojaComSplit) return { registrado: false, motivo: 'loja_sem_conta_mercado_pago_vinculada' };
+
+    const ehEntrega = String(p.local_consumo || '').toUpperCase() === 'DELIVERY';
+    const taxaMotoboy = (ehEntrega && SPLIT_INCLUI_TAXA_MOTOBOY) ? deCentavos(emCentavos(p.vl_entrega)) : 0;
+    const comissao = calcularTaxaPlataforma(p.vl_total);
+    if (taxaMotoboy + comissao <= 0) return { registrado: false, motivo: 'valor_zerado' };
+
+    let idMotorista = null;
+    if (p.placa) {
+        try {
+            const m = await executeQuery('SELECT id_motorista FROM motorista WHERE placa = ? LIMIT 1', [p.placa]);
+            idMotorista = m.length ? m[0].id_motorista : null;
+        } catch (e) { /* motorista é opcional no ledger */ }
+    }
+
+    const r = await executeQuery(
+        `INSERT IGNORE INTO repasse_lancamento
+            (id_estabelecimento, id_pedido, id_motorista, forma_pagamento,
+             vl_taxa_motoboy, vl_comissao, vl_motoboy_aberto, vl_comissao_aberto, status)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'ABERTO')`,
+        [p.id_estabelecimento, p.id_pedido, idMotorista, String(p.forma_pagamento || '').slice(0, 50),
+         taxaMotoboy, comissao, taxaMotoboy, comissao]
+    );
+
+    console.log(`[Ledger] Pedido ${id_pedido}: débito motoboy ${taxaMotoboy.toFixed(2)} + comissão ${comissao.toFixed(2)} (${r.affectedRows === 1 ? 'novo' : 'já existia'})`);
+    return { registrado: r.affectedRows === 1, vl_taxa_motoboy: taxaMotoboy, vl_comissao: comissao };
+}
+
+// Pedido cancelado depois de finalizado: cancela o débito se ainda não foi abatido em nenhum Pix
+async function cancelarDebitoRepasse(id_pedido) {
+    await executeQuery(
+        `UPDATE repasse_lancamento
+            SET status = 'CANCELADO', vl_motoboy_aberto = 0, vl_comissao_aberto = 0
+          WHERE id_pedido = ? AND status = 'ABERTO'
+            AND vl_motoboy_aberto = vl_taxa_motoboy AND vl_comissao_aberto = vl_comissao`,
+        [id_pedido]
+    );
+}
+
+// Devolve ao débito o que uma compensação tinha abatido
+async function restaurarCompensacoesConn(conn, linhas) {
+    for (const c of linhas) {
+        // só quem conseguir trocar o status restaura (evita restaurar duas vezes)
+        const marca = await queryConn(
+            conn,
+            `UPDATE repasse_compensacao SET status = 'LIBERADO'
+              WHERE id_compensacao = ? AND status IN ('RESERVADO', 'CONFIRMADO')`,
+            [c.id_compensacao]
+        );
+        if (marca.affectedRows !== 1) continue;
+
+        await queryConn(
+            conn,
+            `UPDATE repasse_lancamento
+                SET vl_motoboy_aberto  = vl_motoboy_aberto + ?,
+                    vl_comissao_aberto = vl_comissao_aberto + ?,
+                    status = 'ABERTO', dt_quitacao = NULL
+              WHERE id_lancamento = ? AND status <> 'CANCELADO'`,
+            [c.vl_taxa_motoboy, c.vl_comissao, c.id_lancamento]
+        );
+    }
+}
+
+// Reservas de Pix que nunca foram pagos (QR expirou) voltam para o débito
+async function liberarReservasVencidasConn(conn, id_estabelecimento) {
+    const minutos = (PIX_EXPIRA_MINUTOS > 0 ? PIX_EXPIRA_MINUTOS : 24 * 60) + 15;
+    const vencidas = await queryConn(
+        conn,
+        `SELECT c.id_compensacao, c.id_lancamento, c.vl_taxa_motoboy, c.vl_comissao
+           FROM repasse_compensacao c
+           LEFT JOIN pedido p ON p.mp_payment_id = c.mp_payment_id
+          WHERE c.id_estabelecimento = ?
+            AND c.status = 'RESERVADO'
+            AND c.dt_criacao < DATE_SUB(NOW(), INTERVAL ? MINUTE)
+            AND (p.id_pedido IS NULL OR COALESCE(p.mp_status, '') <> 'approved')`,
+        [id_estabelecimento, minutos]
+    );
+    await restaurarCompensacoesConn(conn, vencidas);
+}
+
+// Reserva (FIFO) o saldo devedor da loja para embutir no application_fee deste Pix.
+// baseFeeCents = comissão + taxa do motoboy deste próprio pedido.
+async function reservarCompensacao(id_estabelecimento, valorPix, baseFeeCents, reservaRef) {
+    const vazio = { motoCents: 0, comCents: 0, totalCents: 0 };
+    const tetoCents = Math.floor(emCentavos(valorPix) * TETO_ABATIMENTO_PERCENTUAL / 100);
+    let folga = tetoCents - baseFeeCents;
+    if (folga <= 0) return vazio;
+
+    const { conn, liberar } = await obterConexaoTransacao();
+    try {
+        await queryConn(conn, 'START TRANSACTION');
+        await liberarReservasVencidasConn(conn, id_estabelecimento);
+
+        const abertos = await queryConn(
+            conn,
+            `SELECT id_lancamento, vl_motoboy_aberto, vl_comissao_aberto
+               FROM repasse_lancamento
+              WHERE id_estabelecimento = ? AND status = 'ABERTO'
+              ORDER BY id_lancamento
+              FOR UPDATE`,
+            [id_estabelecimento]
+        );
+
+        let motoTotal = 0;
+        let comTotal = 0;
+
+        for (const l of abertos) {
+            if (folga <= 0) break;
+
+            const motoAberto = emCentavos(l.vl_motoboy_aberto);
+            const comAberto = emCentavos(l.vl_comissao_aberto);
+
+            const m = Math.min(motoAberto, folga); folga -= m;   // taxa do motoboy primeiro
+            const c = Math.min(comAberto, folga); folga -= c;
+            if (m + c <= 0) continue;
+
+            const restaMoto = motoAberto - m;
+            const restaCom = comAberto - c;
+            const quitado = (restaMoto + restaCom) === 0;
+
+            await queryConn(
+                conn,
+                `UPDATE repasse_lancamento
+                    SET vl_motoboy_aberto = ?, vl_comissao_aberto = ?,
+                        status = ?, dt_quitacao = ${quitado ? 'NOW()' : 'NULL'}
+                  WHERE id_lancamento = ?`,
+                [deCentavos(restaMoto), deCentavos(restaCom), quitado ? 'QUITADO' : 'ABERTO', l.id_lancamento]
+            );
+
+            await queryConn(
+                conn,
+                `INSERT INTO repasse_compensacao
+                    (id_lancamento, id_estabelecimento, reserva_ref, vl_taxa_motoboy, vl_comissao, status)
+                 VALUES (?, ?, ?, ?, ?, 'RESERVADO')`,
+                [l.id_lancamento, id_estabelecimento, reservaRef, deCentavos(m), deCentavos(c)]
+            );
+
+            motoTotal += m;
+            comTotal += c;
+        }
+
+        await queryConn(conn, 'COMMIT');
+        return { motoCents: motoTotal, comCents: comTotal, totalCents: motoTotal + comTotal };
+    } catch (err) {
+        try { await queryConn(conn, 'ROLLBACK'); } catch (e) { /* ignora */ }
+        throw err;
+    } finally {
+        liberar();
+    }
+}
+
+// Pix cancelado / estornado / falhou ao gerar: devolve o valor reservado (ou já confirmado) ao débito
+async function liberarCompensacoes({ reservaRef = null, mpPaymentId = null }) {
+    if (!reservaRef && !mpPaymentId) return;
+
+    const { conn, liberar } = await obterConexaoTransacao();
+    try {
+        await queryConn(conn, 'START TRANSACTION');
+        const linhas = await queryConn(
+            conn,
+            `SELECT id_compensacao, id_lancamento, vl_taxa_motoboy, vl_comissao
+               FROM repasse_compensacao
+              WHERE status IN ('RESERVADO', 'CONFIRMADO')
+                AND ${reservaRef ? 'reserva_ref = ?' : 'mp_payment_id = ?'}
+              FOR UPDATE`,
+            [reservaRef || String(mpPaymentId)]
+        );
+        await restaurarCompensacoesConn(conn, linhas);
+        await queryConn(conn, 'COMMIT');
+    } catch (err) {
+        try { await queryConn(conn, 'ROLLBACK'); } catch (e) { /* ignora */ }
+        throw err;
+    } finally {
+        liberar();
+    }
+}
+
+// Cancela/estorna o Pix de um pedido no Mercado Pago. Devolve 'refunded' | 'cancelled' | null.
+// Se o Pix estava pago e o estorno FALHAR, lança erro (codigoHttp 502): o pedido NÃO pode ser
+// marcado como cancelado com o dinheiro ainda na conta da loja.
+async function estornarPixDoPedido(pedido, id_pedido) {
+    const ehPix = pedido.forma_pagamento && String(pedido.forma_pagamento).toUpperCase().includes('PIX');
+    if (!(pedido.mp_payment_id && Number(pedido.vl_total) > 0 && ehPix)) return null;
+
+    const tokenMP = pedido.mp_access_token || process.env.MP_ACCESS_TOKEN;
+    const headersMP = { 'Authorization': `Bearer ${tokenMP}` };
+
+    try {
+        const consulta = await axios.get(
+            `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}`,
+            { headers: headersMP }
+        );
+        const statusMP = consulta.data.status;
+
+        if (statusMP === 'approved') {
+            await axios.post(
+                `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}/refunds`,
+                {},
+                { headers: { ...headersMP, 'X-Idempotency-Key': `refund-pedido-${id_pedido}` } }
+            );
+            console.log(`✅ Pix do pedido ${id_pedido} estornado com sucesso usando a conta da loja!`);
+            return 'refunded';
+        }
+
+        if (statusMP === 'pending' || statusMP === 'in_process') {
+            await axios.put(
+                `https://api.mercadopago.com/v1/payments/${pedido.mp_payment_id}`,
+                { status: 'cancelled' },
+                { headers: headersMP }
+            );
+            console.log(`🚫 Cobrança Pix do pedido ${id_pedido} cancelada no Mercado Pago.`);
+            return 'cancelled';
+        }
+
+        console.log(`ℹ️ Pedido ${id_pedido}: pagamento MP está '${statusMP}', nada a estornar.`);
+        return (statusMP === 'refunded' || statusMP === 'cancelled') ? statusMP : null;
+    } catch (mpErr) {
+        console.error(`❌ Erro na API do Mercado Pago (pedido ${id_pedido}):`, mpErr.response?.data || mpErr.message);
+        const erro = new Error('Não foi possível estornar o Pix no Mercado Pago. O pedido NÃO foi cancelado. Tente novamente.');
+        erro.codigoHttp = 502;
+        throw erro;
+    }
 }
 
 app.post("/pix/gerar", async (req, res) => {
+    let reservaRef = null; // reserva do saldo devedor (ledger) feita para este Pix
     try {
-        const { id_pedido, slug, id_estabelecimento, transaction_amount, description, payer } = req.body;
+        const { id_pedido, slug, id_estabelecimento, transaction_amount, description, payer, vl_entrega } = req.body;
 
         // 1. Busca dinamicamente o token da loja no banco pelo slug ou id
         let tokenMP = null;
+        let idEstabLoja = null;
         if (slug || id_estabelecimento) {
             const estab = await executeQuery(
-                "SELECT mp_access_token FROM estabelecimento WHERE slug = ? OR id_estabelecimento = ? LIMIT 1",
+                "SELECT id_estabelecimento, mp_access_token FROM estabelecimento WHERE slug = ? OR id_estabelecimento = ? LIMIT 1",
                 [slug || '', id_estabelecimento || 0]
             );
             if (estab.length > 0 && estab[0].mp_access_token) {
                 tokenMP = estab[0].mp_access_token;
+                idEstabLoja = estab[0].id_estabelecimento;
             }
         }
 
@@ -3095,14 +3545,39 @@ app.post("/pix/gerar", async (req, res) => {
             pagamentoBody.notification_url = `${process.env.API_PUBLIC_URL.replace(/\/$/, '')}/pix/webhook`;
         }
 
+        // QR Code com validade (o saldo reservado no ledger precisa de um prazo para ser liberado)
+        if (PIX_EXPIRA_MINUTOS > 0) {
+            pagamentoBody.date_of_expiration = dataExpiracaoPix(PIX_EXPIRA_MINUTOS);
+        }
+
         // application_fee só funciona com o token OAuth da loja (conta diferente da sua).
         // Se caiu no plano B (.env = sua própria conta), não cobra taxa.
+        // application_fee = comissão + taxa do motoboy + saldo devedor antigo (dinheiro/cartão)
         const usandoTokenDaPlataforma = tokenMP === process.env.MP_ACCESS_TOKEN;
         if (!usandoTokenDaPlataforma) {
-            const taxa = calcularTaxaPlataforma(valor);
-            if (taxa > 0) {
-                pagamentoBody.application_fee = taxa;
-                console.log(`[PIX] Pedido ${id_pedido}: valor ${valor.toFixed(2)} | taxa plataforma ${taxa.toFixed(2)}`);
+            const comissao = calcularTaxaPlataforma(valor);
+            const entregaInformada = Math.min(Math.max(Number(vl_entrega) || 0, 0), valor);
+            const taxaMotoboy = SPLIT_INCLUI_TAXA_MOTOBOY ? entregaInformada : 0;
+            const baseCents = emCentavos(comissao) + emCentavos(taxaMotoboy);
+
+            let abatidoCents = 0;
+            if (idEstabLoja) {
+                try {
+                    reservaRef = crypto.randomBytes(16).toString('hex');
+                    const comp = await reservarCompensacao(idEstabLoja, valor, baseCents, reservaRef);
+                    abatidoCents = comp.totalCents;
+                    if (abatidoCents === 0) reservaRef = null; // nada foi reservado
+                } catch (e) {
+                    console.error('[Ledger] Falha ao reservar saldo devedor (Pix segue só com a taxa do pedido):', e.message);
+                    reservaRef = null;
+                    abatidoCents = 0;
+                }
+            }
+
+            const feeCents = baseCents + abatidoCents;
+            if (feeCents > 0) {
+                pagamentoBody.application_fee = deCentavos(feeCents);
+                console.log(`[PIX] Pedido ${id_pedido}: valor ${valor.toFixed(2)} | comissão ${comissao.toFixed(2)} | motoboy ${taxaMotoboy.toFixed(2)} | saldo anterior abatido ${deCentavos(abatidoCents).toFixed(2)} | application_fee ${deCentavos(feeCents).toFixed(2)}`);
             }
         }
 
@@ -3125,6 +3600,15 @@ app.post("/pix/gerar", async (req, res) => {
         const mp_qr_code_base64 = paymentData.point_of_interaction.transaction_data.qr_code_base64;
         const mp_status = paymentData.status;
 
+        // Amarra a reserva do ledger ao pagamento criado
+        if (reservaRef) {
+            try {
+                await executeQuery('UPDATE repasse_compensacao SET mp_payment_id = ? WHERE reserva_ref = ?', [String(mp_payment_id), reservaRef]);
+            } catch (e) {
+                console.error('[Ledger] Falha ao vincular reserva ao pagamento', mp_payment_id, e.message);
+            }
+        }
+
         // 6. Salva os dados do Pix gerado no pedido
         const sqlUpdate = "UPDATE pedido SET mp_payment_id = ?, mp_qr_code = ?, mp_status = ? WHERE id_pedido = ?";
         if (id_pedido) {
@@ -3140,6 +3624,9 @@ app.post("/pix/gerar", async (req, res) => {
         });
 
     } catch (error) {
+        if (reservaRef) {
+            try { await liberarCompensacoes({ reservaRef }); } catch (e) { console.error('[Ledger] Falha ao liberar reserva:', e.message); }
+        }
         console.error("Erro no Mercado Pago:", error.response?.data || error.message);
         return res.status(500).json({ 
             error: "Erro ao gerar PIX no Mercado Pago.",
@@ -3284,6 +3771,19 @@ async function confirmarPixEGerarNotificacao(mpPaymentId) {
               WHERE id_pedido = ?`,
             [pedido.id_pedido]
         );
+
+        // a2) ledger: o saldo devedor reservado neste Pix passa a CONFIRMADO (nunca derruba a confirmação)
+        try {
+            await queryConn(
+                conn,
+                `UPDATE repasse_compensacao
+                    SET status = 'CONFIRMADO', id_pedido_pix = ?, dt_confirmacao = NOW()
+                  WHERE mp_payment_id = ? AND status = 'RESERVADO'`,
+                [pedido.id_pedido, String(mpPaymentId)]
+            );
+        } catch (e) {
+            console.error('[Ledger] Falha ao confirmar compensação do Pix', mpPaymentId, e.message);
+        }
 
         // b) já existe notificação desse pedido?
         const existente = await queryConn(
@@ -3456,6 +3956,10 @@ app.post("/pix/reembolsar", async function (req, res) {
             // 3. Atualiza o status do pedido no banco para Cancelado (C)
             const sqlUpdate = "UPDATE pedido SET status = 'C' WHERE id_pedido = ?";
             db.query(sqlUpdate, [id_pedido]);
+
+            // Ledger: o Pix voltou ao cliente, então o saldo que ele havia abatido volta ao débito
+            liberarCompensacoes({ mpPaymentId: String(pedido.mp_payment_id) })
+                .catch(e => console.error('[Ledger] Falha ao liberar compensação no reembolso:', e.message));
 
             return res.status(200).json({
                 sucesso: true,
