@@ -845,7 +845,7 @@ app.get("/pedido/check/:id_pedido", token.ValidateJWT, function (req, res) {
     ssql += "count(i.id_item) as qtd_item, p.nome_cliente ";
     ssql += "from pedido p ";
     ssql += "left join pedido_item i on i.id_pedido = p.id_pedido ";
-    ssql += "where p.id_estabelecimento = ? " + filtro_data; 
+    ssql += "where p.id_estabelecimento = ? and p.status <> 'W' " + filtro_data; 
     ssql += "group by p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido, ";
     ssql += "p.vl_subtotal, p.vl_entrega, p.vl_total, p.nome_cliente, ";
     ssql += "p.numero_mesa, p.numero_pessoas, p.local_consumo ";
@@ -893,7 +893,7 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
           JOIN pedido_item i ON i.id_pedido = p.id_pedido
           JOIN produto o ON o.id_produto = i.id_produto
           LEFT JOIN produto_categoria c ON c.id_categoria = o.id_categoria
-          WHERE p.id_estabelecimento = ? 
+          WHERE p.id_estabelecimento = ? AND p.status <> 'W'
           ORDER BY p.dt_pedido
       `;
 
@@ -974,7 +974,7 @@ app.get("/pedidos/itens", token.ValidateJWT, function (request, response) {
               p.vl_total
           FROM pedido p
           LEFT JOIN usuario u ON u.id_usuario = p.id_usuario
-          WHERE p.id_estabelecimento = ?
+          WHERE p.id_estabelecimento = ? AND p.status <> 'W'
           ORDER BY p.dt_pedido
       `;
 
@@ -1106,6 +1106,7 @@ app.get('/pedidos/acompanhar/:id_pedido', (req, res) => {
         FROM pedido p
         JOIN pedido_item i ON i.id_pedido = p.id_pedido
         JOIN produto o ON o.id_produto = i.id_produto
+        WHERE p.status <> 'W'
         ORDER BY p.dt_pedido, i.id_item
     `;
 
@@ -2095,7 +2096,7 @@ app.get("/pedidos", token.ValidateJWT, function (request, response) {
             p.nome_cliente
         FROM pedido p
         LEFT JOIN pedido_item i ON i.id_pedido = p.id_pedido
-        WHERE p.id_estabelecimento = ? ${filtro_data}
+        WHERE p.id_estabelecimento = ? AND p.status <> 'W' ${filtro_data}
         GROUP BY 
             p.id_pedido, p.status, p.forma_pagamento, p.dt_pedido,
             p.vl_subtotal, p.vl_entrega, p.vl_total, p.vl_falta,
@@ -2407,8 +2408,8 @@ app.post('/pedidos/publico', async (req, res) => {
                 (id_usuario, id_estabelecimento, nome_cliente, vl_subtotal, vl_entrega, 
                  forma_pagamento, vl_total, status, dt_pedido, endereco_entrega, 
                  rota, observacao, local_consumo, dinheiro, troco, session_id,
-                 mp_payment_id, mp_status)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                 mp_payment_id, mp_status, fone_cliente)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
                     null,
                     id_estabelecimento,
@@ -2417,7 +2418,7 @@ app.post('/pedidos/publico', async (req, res) => {
                     p.vl_entrega || 0,
                     p.forma_pagamento || 'A combinar',
                     p.vl_total || 0,
-                    'A',
+                    mp_payment_id ? 'W' : 'A', // Pix só vira 'A' quando o pagamento for aprovado
                     dtPedidoBrasilia,
                     p.endereco_entrega || null,
                     p.rota || null,
@@ -2427,7 +2428,8 @@ app.post('/pedidos/publico', async (req, res) => {
                     p.troco || 0,
                     session_id,
                     mp_payment_id,
-                    mp_payment_id ? 'pending' : null
+                    mp_payment_id ? 'pending' : null,
+                    p.fone_cliente ? String(p.fone_cliente).slice(0, 25) : null
                 ],
                 (err, res) => err ? reject(err) : resolve(res)
             );
@@ -2997,7 +2999,7 @@ app.get("/financeiro/resumo", token.ValidateJWT, function (req, res) {
 
     const ssql = `
         SELECT 
-            (SELECT SUM(vl_total) FROM pedido WHERE id_estabelecimento = ? AND MONTH(dt_pedido) = ? AND YEAR(dt_pedido) = ? AND status <> 'C') as total_vendas,
+            (SELECT SUM(vl_total) FROM pedido WHERE id_estabelecimento = ? AND MONTH(dt_pedido) = ? AND YEAR(dt_pedido) = ? AND status NOT IN ('C', 'W')) as total_vendas,
             (SELECT SUM(valor) FROM despesa WHERE id_estabelecimento = ? AND MONTH(data_vencimento) = ? AND YEAR(data_vencimento) = ? AND status = 'P') as total_despesas_pagas
     `;
 
@@ -3088,6 +3090,11 @@ app.post("/pix/gerar", async (req, res) => {
             payer: payerData
         };
 
+        // Webhook do Mercado Pago (defina API_PUBLIC_URL no Render, ex.: https://seu-app.onrender.com)
+        if (process.env.API_PUBLIC_URL) {
+            pagamentoBody.notification_url = `${process.env.API_PUBLIC_URL.replace(/\/$/, '')}/pix/webhook`;
+        }
+
         // application_fee só funciona com o token OAuth da loja (conta diferente da sua).
         // Se caiu no plano B (.env = sua própria conta), não cobra taxa.
         const usandoTokenDaPlataforma = tokenMP === process.env.MP_ACCESS_TOKEN;
@@ -3141,7 +3148,176 @@ app.post("/pix/gerar", async (req, res) => {
     }
 });
 
-// 2. ROTA PARA CONSULTAR STATUS DO PIX DIRETAMENTE NO MERCADO PAGO
+// ===================================================================================
+// PIX: confirmação + notificação criada pelo SERVIDOR (idempotente e atômica)
+// Usada por: POST /pix/webhook, GET /pix/status/:payment_id e POST /pix/reprocessar-pendentes
+// Status do pedido: 'W' = aguardando pagamento Pix (invisível para o estabelecimento),
+//                   'A' = aberto na fila. A transição W -> A só acontece aqui, com o Pix aprovado.
+// ===================================================================================
+
+function obterConexaoTransacao() {
+    return new Promise((resolve, reject) => {
+        if (typeof db.getConnection !== 'function') {
+            return resolve({ conn: db, liberar: () => {} });
+        }
+        db.getConnection((err, conn) => {
+            if (err) return reject(err);
+            resolve({ conn, liberar: () => conn.release() });
+        });
+    });
+}
+
+function queryConn(conn, sql, params = []) {
+    return new Promise((resolve, reject) => {
+        conn.query(sql, params, (err, results) => (err ? reject(err) : resolve(results)));
+    });
+}
+
+function formatarBRL(valor) {
+    return Number(valor || 0)
+        .toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+        .replace(/\u00a0/g, ' ');
+}
+
+// Consulta o pagamento no Mercado Pago usando o token da loja dona do pedido
+async function consultarPagamentoMP(mpPaymentId) {
+    const rows = await executeQuery(
+        `SELECT p.id_pedido, e.mp_access_token
+           FROM pedido p
+           INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento
+          WHERE p.mp_payment_id = ?
+          LIMIT 1`,
+        [String(mpPaymentId)]
+    );
+    if (rows.length === 0) return { encontrado: false };
+
+    const tokenMP = rows[0].mp_access_token || process.env.MP_ACCESS_TOKEN;
+    const consulta = await axios.get(
+        `https://api.mercadopago.com/v1/payments/${encodeURIComponent(mpPaymentId)}`,
+        { headers: { Authorization: `Bearer ${tokenMP}` } }
+    );
+
+    return {
+        encontrado: true,
+        status: consulta.data.status,
+        valor: Number(consulta.data.transaction_amount || 0)
+    };
+}
+
+// Monta o resumo da notificação direto do que está salvo em pedido / pedido_item
+async function montarMensagemNotificacaoPedido(conn, pedido) {
+    const itens = await queryConn(
+        conn,
+        `SELECT i.qtd, o.nome AS nome_produto, i.observacao
+           FROM pedido_item i
+           INNER JOIN produto o ON o.id_produto = i.id_produto
+          WHERE i.id_pedido = ?
+          ORDER BY i.id_item`,
+        [pedido.id_pedido]
+    );
+
+    // No checkout, os adicionais/sem-itens escolhidos ficam em pedido_item.observacao
+    const itensResumo = itens.map(i => {
+        const linhas = String(i.observacao || '')
+            .split(/\r?\n|\s\|\s/)
+            .map(l => l.trim())
+            .filter(Boolean)
+            .map(l => `   - ${l.replace(/^[-+]\s*/, '')}`);
+        return [`${parseInt(i.qtd, 10) || 0}x ${i.nome_produto}`, ...linhas].join('\n');
+    }).join('\n');
+
+    const retirada = String(pedido.local_consumo || '').toUpperCase() === 'RETIRADA';
+    const linhaEndereco = retirada
+        ? 'RETIRADA NO LOCAL'
+        : `Endereco:\n${pedido.endereco_entrega || ''}` + (pedido.rota ? `\nRota: ${pedido.rota}` : '');
+
+    return (
+        `NOVO PEDIDO #${pedido.id_pedido}\n\n` +
+        `Cliente: ${pedido.nome_cliente}\n` +
+        (pedido.fone_cliente ? `WhatsApp: ${pedido.fone_cliente}\n` : '') +
+        `\nItens:\n${itensResumo}\n\n` +
+        `Total: ${formatarBRL(pedido.vl_total)}\n` +
+        `Pagamento: PIX\n\n` +
+        `${linhaEndereco}`
+    );
+}
+
+// Retorna { encontrado, pago, status, id_pedido, notificacao_criada }
+// `pago: true` só sai depois do COMMIT (pedido aberto + notificação garantida).
+async function confirmarPixEGerarNotificacao(mpPaymentId) {
+    const mp = await consultarPagamentoMP(mpPaymentId);
+    if (!mp.encontrado) return { encontrado: false, pago: false };
+    if (mp.status !== 'approved') return { encontrado: true, pago: false, status: mp.status };
+
+    const { conn, liberar } = await obterConexaoTransacao();
+    try {
+        await queryConn(conn, 'START TRANSACTION');
+
+        // Trava a linha do pedido: webhook e polling simultâneos entram em fila aqui
+        const peds = await queryConn(
+            conn,
+            'SELECT * FROM pedido WHERE mp_payment_id = ? LIMIT 1 FOR UPDATE',
+            [String(mpPaymentId)]
+        );
+        if (peds.length === 0) {
+            await queryConn(conn, 'ROLLBACK');
+            return { encontrado: false, pago: false };
+        }
+        const pedido = peds[0];
+
+        if (Math.abs(mp.valor - Number(pedido.vl_total)) > 0.01) {
+            console.warn(`[PIX] Valor divergente no pedido #${pedido.id_pedido}: MP=${mp.valor} pedido=${pedido.vl_total}`);
+        }
+
+        // Pedido cancelado (e estornado) pelo estabelecimento: não reabre nem notifica
+        if (pedido.status === 'C') {
+            await queryConn(conn, 'COMMIT');
+            return { encontrado: true, pago: true, status: 'approved', id_pedido: pedido.id_pedido, notificacao_criada: false };
+        }
+
+        // a) aprova e abre na fila (só sai de 'W'; nunca mexe em pedido que já andou)
+        await queryConn(
+            conn,
+            `UPDATE pedido
+                SET mp_status = 'approved',
+                    status = CASE WHEN status = 'W' THEN 'A' ELSE status END
+              WHERE id_pedido = ?`,
+            [pedido.id_pedido]
+        );
+
+        // b) já existe notificação desse pedido?
+        const existente = await queryConn(
+            conn,
+            `SELECT id_notificacao FROM notificacoes
+              WHERE id_pedido = ? AND tipo = 'CARDAPIO_DIGITAL' LIMIT 1`,
+            [pedido.id_pedido]
+        );
+
+        // c) se não existe, o servidor cria
+        let criada = false;
+        if (existente.length === 0) {
+            const mensagem = await montarMensagemNotificacaoPedido(conn, pedido);
+            await queryConn(
+                conn,
+                `INSERT INTO notificacoes
+                    (id_usuario, mensagem, status, dt_criacao, id_estabelecimento, tipo, id_produto, id_pedido)
+                 VALUES (0, ?, 'A', NOW(), ?, 'CARDAPIO_DIGITAL', NULL, ?)`,
+                [mensagem, pedido.id_estabelecimento, pedido.id_pedido]
+            );
+            criada = true;
+        }
+
+        await queryConn(conn, 'COMMIT');
+        return { encontrado: true, pago: true, status: 'approved', id_pedido: pedido.id_pedido, notificacao_criada: criada };
+    } catch (err) {
+        try { await queryConn(conn, 'ROLLBACK'); } catch (e) { /* ignora */ }
+        throw err;
+    } finally {
+        liberar();
+    }
+}
+
+// 2. ROTA PARA CONSULTAR STATUS DO PIX (polling do checkout) — confirma e notifica no servidor
 app.get("/pix/status/:payment_id", async function (req, res) {
     const payment_id = req.params.payment_id;
 
@@ -3150,76 +3326,95 @@ app.get("/pix/status/:payment_id", async function (req, res) {
     }
 
     try {
-        // 1. Busca o pedido e o token da loja
-        let tokenMP = null;
-        const rows = await executeQuery(
-            `SELECT p.id_pedido, p.id_estabelecimento, p.nome_cliente, p.vl_total,
-                    p.forma_pagamento, p.local_consumo, p.endereco_entrega,
-                    e.mp_access_token 
-             FROM pedido p 
-             INNER JOIN estabelecimento e ON e.id_estabelecimento = p.id_estabelecimento 
-             WHERE p.mp_payment_id = ? LIMIT 1`,
-            [payment_id]
-        );
+        const r = await confirmarPixEGerarNotificacao(payment_id);
 
-        if (rows.length > 0 && rows[0].mp_access_token) {
-            tokenMP = rows[0].mp_access_token;
-        }
-
-        if (!tokenMP) {
-            tokenMP = process.env.MP_ACCESS_TOKEN;
-        }
-
-        // 2. Consulta no Mercado Pago
-        const responseMP = await axios.get(
-            `https://mercadopago.com{payment_id}`,
-            {
-                headers: {
-                    'Authorization': `Bearer ${tokenMP}`
-                }
-            }
-        );
-
-        const mp_status = responseMP.data.status;
-
-        // 3. Se aprovou no Mercado Pago, atualiza o pedido e garante a notificação para o Delphi
-        if (mp_status === 'approved' && rows.length > 0) {
-            const ped = rows[0];
-
-            await executeQuery(
-                "UPDATE pedido SET mp_status = 'approved' WHERE id_pedido = ?",
-                [ped.id_pedido]
-            );
-
-            // Verifica se já existe notificação para não duplicar
-            const notifExistente = await executeQuery(
-                "SELECT id_notificacao FROM notificacoes WHERE id_pedido = ? AND tipo = 'CARDAPIO_DIGITAL' LIMIT 1",
-                [ped.id_pedido]
-            );
-
-            if (notifExistente.length === 0) {
-                const msg = `NOVO PEDIDO #${ped.id_pedido} (PIX PAGO)\nCliente: ${ped.nome_cliente}\nTotal: R$ ${Number(ped.vl_total).toFixed(2)}\nTipo: ${ped.local_consumo}`;
-                await executeQuery(
-                    `INSERT INTO notificacoes (id_usuario, mensagem, status, dt_criacao, id_estabelecimento, tipo, id_pedido)
-                     VALUES (0, ?, 'A', NOW(), ?, 'CARDAPIO_DIGITAL', ?)`,
-                    [msg, ped.id_estabelecimento, ped.id_pedido]
-                );
-            }
+        if (!r.encontrado) {
+            return res.status(404).json({ pago: false, error: "Pedido não encontrado para este pagamento." });
         }
 
         return res.status(200).json({
             mp_payment_id: payment_id,
-            status: mp_status,
-            pago: mp_status === 'approved'
+            status: r.status,
+            pago: r.pago
         });
-
     } catch (error) {
-        console.error("Erro ao consultar Pix no Mercado Pago:", error.response?.data || error.message);
+        console.error("Erro ao confirmar Pix:", error.response?.data || error.message);
         return res.status(500).json({ error: "Erro ao consultar status no Mercado Pago." });
     }
 });
 
+// WEBHOOK do Mercado Pago: nunca confia no corpo, só pega o id e confirma na API do MP
+app.post("/pix/webhook", async function (req, res) {
+    try {
+        const tipo = req.body?.type || req.query?.type || req.query?.topic;
+        const mpPaymentId = req.body?.data?.id || req.query?.["data.id"] || req.query?.id;
 
+        if ((tipo && tipo !== 'payment') || !mpPaymentId) {
+            return res.sendStatus(200);
+        }
+
+        const r = await confirmarPixEGerarNotificacao(String(mpPaymentId));
+
+        if (!r.encontrado) {
+            // webhook chegou antes do pedido ser gravado: erro para o Mercado Pago reenviar
+            console.warn(`[PIX webhook] pagamento ${mpPaymentId} ainda sem pedido; aguardando reenvio`);
+            return res.sendStatus(500);
+        }
+
+        return res.sendStatus(200);
+    } catch (error) {
+        console.error("[PIX webhook] erro:", error.response?.data || error.message);
+        return res.sendStatus(500); // MP reenvia
+    }
+});
+
+// RESGATE: reprocessa pedidos com Pix que ainda não têm notificação (ex.: #13894)
+// POST /pix/reprocessar-pendentes            -> todos os pendentes da loja logada (últimos 7 dias)
+// POST /pix/reprocessar-pendentes {id_pedido} -> só um
+app.post("/pix/reprocessar-pendentes", token.ValidateJWT, async function (req, res) {
+    try {
+        const id_estabelecimento = req.id_estabelecimento;
+        const { id_pedido } = req.body || {};
+
+        const params = [id_estabelecimento];
+        let filtro = '';
+        if (id_pedido) {
+            filtro = 'AND p.id_pedido = ?';
+            params.push(id_pedido);
+        }
+
+        const pendentes = await executeQuery(
+            `SELECT p.id_pedido, p.mp_payment_id
+               FROM pedido p
+              WHERE p.id_estabelecimento = ?
+                AND p.mp_payment_id IS NOT NULL
+                AND p.status <> 'C'
+                AND p.dt_pedido >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+                AND NOT EXISTS (
+                    SELECT 1 FROM notificacoes n
+                     WHERE n.id_pedido = p.id_pedido AND n.tipo = 'CARDAPIO_DIGITAL'
+                )
+                ${filtro}
+              ORDER BY p.id_pedido`,
+            params
+        );
+
+        const resultado = [];
+        for (const p of pendentes) {
+            try {
+                const r = await confirmarPixEGerarNotificacao(String(p.mp_payment_id));
+                resultado.push({ id_pedido: p.id_pedido, pago: r.pago, status: r.status, notificacao_criada: !!r.notificacao_criada });
+            } catch (e) {
+                resultado.push({ id_pedido: p.id_pedido, erro: e.message });
+            }
+        }
+
+        return res.json({ verificados: pendentes.length, resultado });
+    } catch (error) {
+        console.error("Erro ao reprocessar Pix pendentes:", error);
+        return res.status(500).json({ error: "Erro ao reprocessar pedidos pendentes." });
+    }
+});
 
 app.post("/pix/reembolsar", async function (req, res) {
     const { id_pedido } = req.body;
@@ -3629,9 +3824,3 @@ const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`API 99Burger rodando na porta ${port}`);
 });
-
-
-
-
-
-
